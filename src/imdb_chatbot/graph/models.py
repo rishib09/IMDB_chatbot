@@ -120,6 +120,16 @@ def build_models(
     """
     cfg = cfg or load_models_config()
 
+    # Maya's persona (ticket #44): prepended as the generator's system message so
+    # recommendations speak in her voice. Imported lazily-cheap; falls back to an
+    # empty string if the artifact is missing so the generator still runs.
+    try:
+        from ..persona import generator_system_prompt
+
+        persona_system = generator_system_prompt()
+    except Exception:  # noqa: BLE001 - persona is optional flavor, never fatal
+        persona_system = ""
+
     rewriter = _init_slot_model("rewriter", cfg)
     extractor = _init_slot_model("extractor", cfg).with_structured_output(
         ParsedQuery, include_raw=True
@@ -155,7 +165,12 @@ def build_models(
         return parsed
 
     def generate(query: str, candidates: Sequence[ScoredMovie]) -> RecommendationSet:
-        out = generator.invoke(_generate_prompt(query, candidates))
+        user_prompt = _generate_prompt(query, candidates)
+        messages = (
+            [{"role": "system", "content": persona_system}] if persona_system else []
+        )
+        messages.append({"role": "user", "content": user_prompt})
+        out = generator.invoke(messages)
         _record("generator", out.get("raw"))
         response = out.get("parsed")
         if response is None:
