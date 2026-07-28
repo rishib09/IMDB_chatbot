@@ -1,0 +1,6 @@
+{"query_id": "q1", "query": "rainy zephyrium detective at midnight", "category": "standard_semantic", "relevant_tmdb_ids": [1]}
+{"query_id": "q2", "query": "Busan Ghost", "category": "exact_title", "relevant_tmdb_ids": [8]}
+{"query_id": "q3", "query": "detective murder mystery", "category": "negation_exclusion", "relevant_tmdb_ids": [7], "parsed": {"exclude_actors": ["Repeat Star"]}}
+{"query_id": "q4", "query": "monsoon romance backwaters kerala", "category": "region_conditioned", "relevant_tmdb_ids": [13], "parsed": {"region": "IN"}}
+{"query_id": "q5", "query": "comedy", "category": "short", "relevant_tmdb_ids": [9]}
+{"query_id": "q6", "query": "underwater basket weaving championship xylophones", "category": "ood_unanswerable", "relevant_tmdb_ids": []}
