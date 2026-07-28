@@ -1,0 +1,58 @@
+name: Deploy to HF Spaces
+
+# CI-gated deploy (ticket #26): a RED regression suite BLOCKS the deploy. The
+# deploy job `needs:` the test job, so ruff + pytest must pass before anything
+# is pushed to the Space.
+#
+# OWNER SETUP (see docs/deploy.md for the full checklist):
+#   1. Create the HF Space (Streamlit SDK) at https://huggingface.co/spaces/<owner>/<space>.
+#   2. Set the GitHub Actions secret HF_TOKEN (a write-scoped HF token).
+#   3. Edit SPACE_ID below to your real "<owner>/<space>".
+# No token is hardcoded here; HF_TOKEN is read from GitHub Actions secrets.
+
+on:
+  push:
+    branches: [main]
+
+env:
+  # Placeholder - the OWNER must replace this with the real Space id.
+  SPACE_ID: your-hf-username/imdb-chatbot
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Lint
+        run: ruff check .
+      - name: Test
+        run: pytest -q
+
+  deploy:
+    # RED suite blocks deploy: this job only runs if `test` succeeded.
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Push to Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          if [ -z "$HF_TOKEN" ]; then
+            echo "HF_TOKEN secret is not set - see docs/deploy.md. Skipping deploy."
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Push the current main to the Space's git remote. HF authenticates via
+          # the token in the URL; USER is a literal placeholder accepted by HF.
+          git push --force "https://USER:${HF_TOKEN}@huggingface.co/spaces/${SPACE_ID}" HEAD:main

@@ -1,0 +1,17 @@
+# Runtime dependencies for the Hugging Face Spaces build (ticket #26).
+# Mirrors the [project].dependencies + [embed] extra in pyproject.toml so the
+# Space can build without a local editable install. No secret values live here.
+pydantic>=2.7
+pydantic-settings>=2.2
+pyyaml>=6.0
+python-dotenv>=1.0
+streamlit>=1.30
+httpx>=0.27
+numpy>=1.26
+faiss-cpu>=1.8
+rank-bm25>=0.2.2
+langgraph>=0.2
+langchain-core>=0.3
+langchain-openai>=0.2
+sentence-transformers>=2.7
+huggingface-hub>=0.23
