@@ -1,0 +1,27 @@
+{
+  "name": "no_repeat_across_genres",
+  "description": "S2: nothing repeats even as the user hops between genres and asks open-endedly.",
+  "turns": [
+    {
+      "user": "an action movie",
+      "invariants": [
+        {"kind": "no_repeat"},
+        {"kind": "recommends_genre", "genre": "Action"}
+      ]
+    },
+    {
+      "user": "a horror movie",
+      "invariants": [
+        {"kind": "no_repeat"},
+        {"kind": "recommends_genre", "genre": "Horror"}
+      ]
+    },
+    {
+      "user": "recommend anything",
+      "invariants": [
+        {"kind": "no_repeat"},
+        {"kind": "min_picks", "n": 1}
+      ]
+    }
+  ]
+}

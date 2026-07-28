@@ -1,0 +1,37 @@
+{
+  "name": "multi_turn_stress",
+  "description": "A longer conversation combining a persistent actor exclusion, reference resolution, a genre switch, and no-repeat across four turns.",
+  "turns": [
+    {
+      "user": "action movies without Keanu Reeves",
+      "invariants": [
+        {"kind": "constraint_holds", "exclude_actors": ["Keanu Reeves"]},
+        {"kind": "recommends_genre", "genre": "Action"}
+      ]
+    },
+    {
+      "user": "something like that",
+      "invariants": [
+        {"kind": "resolves_reference", "contains": ["action"]},
+        {"kind": "constraint_holds", "exclude_actors": ["Keanu Reeves"]},
+        {"kind": "no_repeat"},
+        {"kind": "recommends_genre", "genre": "Action"}
+      ]
+    },
+    {
+      "user": "now a thriller",
+      "invariants": [
+        {"kind": "constraint_holds", "exclude_actors": ["Keanu Reeves"]},
+        {"kind": "recommends_genre", "genre": "Thriller"},
+        {"kind": "no_repeat"}
+      ]
+    },
+    {
+      "user": "one more thriller",
+      "invariants": [
+        {"kind": "no_repeat"},
+        {"kind": "recommends_genre", "genre": "Thriller"}
+      ]
+    }
+  ]
+}

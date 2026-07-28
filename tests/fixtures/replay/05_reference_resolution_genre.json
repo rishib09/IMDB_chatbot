@@ -1,0 +1,20 @@
+{
+  "name": "reference_resolution_genre",
+  "description": "Section 7.5: 'more like that' resolves to the prior genre request.",
+  "turns": [
+    {
+      "user": "horror movies",
+      "invariants": [
+        {"kind": "recommends_genre", "genre": "Horror"}
+      ]
+    },
+    {
+      "user": "give me more like that",
+      "invariants": [
+        {"kind": "resolves_reference", "contains": ["horror"]},
+        {"kind": "no_repeat"},
+        {"kind": "recommends_genre", "genre": "Horror"}
+      ]
+    }
+  ]
+}

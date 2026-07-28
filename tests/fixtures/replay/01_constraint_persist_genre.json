@@ -1,0 +1,27 @@
+{
+  "name": "constraint_persist_genre",
+  "description": "S1: a genre exclusion set in turn 1 still constrains turns 2 and 3.",
+  "turns": [
+    {
+      "user": "action movies but no comedy",
+      "invariants": [
+        {"kind": "constraint_holds", "exclude_genres": ["Comedy"]},
+        {"kind": "recommends_genre", "genre": "Action"}
+      ]
+    },
+    {
+      "user": "show me another one",
+      "invariants": [
+        {"kind": "constraint_holds", "exclude_genres": ["Comedy"]},
+        {"kind": "no_repeat"}
+      ]
+    },
+    {
+      "user": "one more please",
+      "invariants": [
+        {"kind": "constraint_holds", "exclude_genres": ["Comedy"]},
+        {"kind": "no_repeat"}
+      ]
+    }
+  ]
+}

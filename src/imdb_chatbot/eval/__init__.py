@@ -17,10 +17,24 @@ Run it against the live corpus with::
 The categories are the 8 from section 8.7: standard_semantic, exact_title,
 negation_exclusion, short, region_conditioned, numeric_filter, ambiguous,
 ood_unanswerable.
+
+Two further surfaces land with ticket #24:
+
+- ``detect``: deterministic detection rules that turn a ``TurnTrace`` into the
+  taxonomy ``flags`` it fired (section 8.2), plus batch counting.
+- ``replay``: the multi-turn replay suite - scripted conversations with
+  code-verifiable invariants, replayed through the graph with fake models.
 """
 
 from __future__ import annotations
 
+from .detect import (
+    COST_BUDGET_USD,
+    EXTRACT_RETRY_CAP,
+    apply_detection,
+    count_codes,
+    detect,
+)
 from .harness import (
     K_VALUES,
     CategorySummary,
@@ -30,15 +44,36 @@ from .harness import (
     format_report,
 )
 from .labels import CATEGORIES, LabeledQuery, load_labels
+from .replay import (
+    Invariant,
+    ReplayScript,
+    ReplayTurn,
+    ScriptOutcome,
+    load_script,
+    load_scripts,
+    run_script,
+)
 
 __all__ = [
     "CATEGORIES",
+    "COST_BUDGET_USD",
+    "EXTRACT_RETRY_CAP",
     "K_VALUES",
     "CategorySummary",
     "EvalReport",
+    "Invariant",
     "LabeledQuery",
     "QueryResult",
+    "ReplayScript",
+    "ReplayTurn",
+    "ScriptOutcome",
+    "apply_detection",
+    "count_codes",
+    "detect",
     "evaluate",
     "format_report",
     "load_labels",
+    "load_script",
+    "load_scripts",
+    "run_script",
 ]
