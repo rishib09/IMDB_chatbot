@@ -19,16 +19,19 @@ Public surface:
 from __future__ import annotations
 
 from .build import RetrieverFn, TurnResult, build_graph, run_turn
+from .gate4 import Gate4Result, run_gate4
 from .models import GraphModels, build_models
 from .tracing import TraceCollector, serialize_trace, traced
 
 __all__ = [
+    "Gate4Result",
     "GraphModels",
     "RetrieverFn",
     "TraceCollector",
     "TurnResult",
     "build_graph",
     "build_models",
+    "run_gate4",
     "run_turn",
     "serialize_trace",
     "traced",

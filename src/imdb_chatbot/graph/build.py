@@ -14,9 +14,11 @@ Topology (deterministic spine, stochastic leaves):
              --(else)---------------------------------------> END
     fallback -> END
 
-``validate`` here is a STRUCTURAL check only (does the response parse as a
-``RecommendationSet`` with non-empty picks?). The Gate-4 semantic validation is a
-separate later ticket (#19).
+``validate`` is the full Gate-4 output gate (ticket #19): a STRUCTURAL check (does
+the response parse as a ``RecommendationSet`` with non-empty picks?) followed by
+the deterministic SEMANTIC checks in ``graph/gate4.py`` (no excluded actor leaks,
+every title exists among the candidates, and prose facts are grounded in the
+candidate records). A violation drives the regen edge (bounded), then fallback.
 
 Both stochastic dependencies are injected: ``retriever`` is a callable
 ``(rewritten_query, parsed) -> list[ScoredMovie]`` and ``models`` is a
@@ -34,6 +36,7 @@ from langgraph.graph import END, START, StateGraph
 
 from ..schemas import ParsedQuery, RecommendationSet, ScoredMovie, TurnState
 from ..store import TraceStore
+from .gate4 import run_gate4
 from .models import GraphModels
 from .tracing import TraceCollector, serialize_trace, traced
 
@@ -163,10 +166,27 @@ def _make_filter(collector: TraceCollector):
     return filter_node
 
 
+def _regen_query(state: TurnState) -> str:
+    """Query fed to the generator, with the prior Gate-4 violation appended.
+
+    On a regeneration pass (``validation_reason`` set) we tell the model exactly
+    which rule it broke last time, so the retry has a chance of fixing it rather
+    than resampling blind. On the first pass this is just the effective query.
+    """
+    query = _effective_query(state)
+    if state.validation_reason:
+        query = (
+            f"{query}\n\nThe previous answer was REJECTED by output validation "
+            f"for: {state.validation_reason}. Regenerate using ONLY facts present "
+            "in the provided records and fix that violation."
+        )
+    return query
+
+
 def _make_generate(models: GraphModels, collector: TraceCollector):
     @traced("generate", collector)
     def generate(state: TurnState) -> dict:
-        query = _effective_query(state)
+        query = _regen_query(state)
         try:
             response = models.generate(query, state.candidates)
             if not isinstance(response, RecommendationSet):
@@ -184,13 +204,31 @@ def _make_generate(models: GraphModels, collector: TraceCollector):
 def _make_validate(collector: TraceCollector):
     @traced("validate", collector)
     def validate(state: TurnState) -> dict:
-        # STRUCTURAL check only (ticket #18): response parses as a
-        # RecommendationSet AND has at least one pick. Semantic Gate-4 is #19.
+        # Gate-4 (ticket #19): a deterministic output gate. First the STRUCTURAL
+        # check (#18) - the response must parse as a RecommendationSet with at
+        # least one pick - then the SEMANTIC Gate-4 checks (excluded actors,
+        # title existence / anti-hallucination, prose fact-grounding). Any
+        # violation drives the existing validate->generate regen edge (bounded),
+        # then fallback. The machine-readable reason is stashed so the regen
+        # prompt can tell the model exactly what to fix.
         response = state.response
         structurally_ok = isinstance(response, RecommendationSet) and len(response.picks) > 0
-        if structurally_ok:
-            return {"validation_failed": False}
-        return {"validation_failed": True, "gen_retries": state.gen_retries + 1}
+        if not structurally_ok:
+            return {
+                "validation_failed": True,
+                "validation_reason": "structural:empty_picks",
+                "gen_retries": state.gen_retries + 1,
+            }
+
+        exclude_actors = state.parsed.exclude_actors if state.parsed else []
+        result = run_gate4(response, state.candidates, exclude_actors)
+        if result.ok:
+            return {"validation_failed": False, "validation_reason": None}
+        return {
+            "validation_failed": True,
+            "validation_reason": result.reason,
+            "gen_retries": state.gen_retries + 1,
+        }
 
     return validate
 
