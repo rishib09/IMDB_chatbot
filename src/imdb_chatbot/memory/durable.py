@@ -31,7 +31,6 @@ Two stores implement the ``MemoryStore`` protocol:
 
 from __future__ import annotations
 
-import json
 import time
 from collections.abc import Iterable
 from pathlib import Path
