@@ -99,6 +99,9 @@ class TurnState(BaseModel):
     gen_retries: int = 0
     extract_failed: bool = False
     validation_failed: bool = False
+    # Machine-readable Gate-4 violation from the last validate; appended to the
+    # regeneration prompt so the model is told exactly what to fix (ticket #19).
+    validation_reason: str | None = None
     degradation: list[str] = []
 
 

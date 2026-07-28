@@ -70,8 +70,10 @@ def _generate_prompt(query: str, candidates: Sequence[ScoredMovie]) -> str:
     listing = "\n".join(lines) if lines else "(no candidates)"
     return (
         "You are a movie recommender. Using ONLY the candidate movies below, write "
-        "a friendly recommendation as a RecommendationSet (picks + prose). Do not "
-        "invent titles.\n\n"
+        "a friendly recommendation as a RecommendationSet (picks + prose). State "
+        "only facts present in the provided records; no external trivia. Do not "
+        "invent titles, years, directors, or cast, and do not mention any actor "
+        "the user asked to exclude.\n\n"
         f"User request: {query}\n\nCandidates:\n{listing}"
     )
 
