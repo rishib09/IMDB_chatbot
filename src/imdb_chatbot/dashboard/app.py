@@ -25,8 +25,22 @@ import streamlit as st
 
 from ..schemas import RecommendationSet
 from ..store import TraceStore
-from .data import LEDGER_COLUMNS, load_change_ledger
+from .data import (
+    TOPLINE_SPECS,
+    ledger_table_display,
+    load_change_ledger,
+    metric_timeline,
+    topline_strip,
+)
 from .render import is_fallback, recommendation_cards, relax_options
+
+# Traffic-light color -> a hex swatch for the topline strip.
+_STATUS_HEX = {
+    "green": "#2e7d32",
+    "amber": "#f9a825",
+    "red": "#c62828",
+    "gray": "#9e9e9e",
+}
 
 # Default trace-store location; override with TRACE_STORE_PATH.
 DEFAULT_STORE_PATH = Path(__file__).resolve().parents[3] / "data" / "traces.db"
@@ -116,6 +130,45 @@ def render_chat_page(handler: ChatHandler | None = None) -> None:
         st.rerun()
 
 
+def _render_topline_strip(store: TraceStore) -> None:
+    """Draw the current topline metrics as colored status tiles."""
+    strip = topline_strip(store)
+    columns = st.columns(len(strip))
+    for column, cell in zip(columns, strip, strict=True):
+        with column:
+            hexcolor = _STATUS_HEX.get(cell["status"], _STATUS_HEX["gray"])
+            st.markdown(
+                f"<div style='border-left:6px solid {hexcolor};padding-left:8px'>"
+                f"<small>{cell['label']}</small><br>"
+                f"<span style='font-size:1.4rem'>{cell['display']}</span></div>",
+                unsafe_allow_html=True,
+            )
+
+
+def _render_metric_timeline(store: TraceStore) -> None:
+    """Draw a metric-selectable timeline with a vertical marker per promoted change."""
+    metric_key = st.selectbox(
+        "Metric",
+        [spec.key for spec in TOPLINE_SPECS],
+        format_func=lambda k: next(s.label for s in TOPLINE_SPECS if s.key == k),
+    )
+    timeline = metric_timeline(store, metric_key)
+    points = timeline["points"]
+    if points:
+        series = {p["ts"]: p["value"] for p in points}
+        st.line_chart(series)
+    else:
+        st.caption("No promoted changes carry this metric yet.")
+    for marker in timeline["markers"]:
+        delta = marker["delta"]
+        delta_txt = f" (delta {delta:+.3g})" if delta is not None else ""
+        # Each marker is clickable -> reveals its change_id / detail.
+        with st.expander(f"{marker['ts']} - {marker['label']}{delta_txt}"):
+            st.write(f"change_id: {marker['change_id']}")
+            st.write(f"artifact_type: {marker['artifact_type']}")
+            st.write(f"value: {marker['value']}")
+
+
 def render_change_ledger_page() -> None:
     st.title("Change Ledger")
     path = _store_path()
@@ -124,14 +177,20 @@ def render_change_ledger_page() -> None:
     store = TraceStore(path)
     try:
         rows = load_change_ledger(store)
+        if not rows:
+            st.info("No changes recorded yet.")
+            return
+
+        st.subheader("Topline health")
+        _render_topline_strip(store)
+
+        st.subheader("Metric timeline")
+        _render_metric_timeline(store)
+
+        st.subheader("Ledger")
+        st.dataframe(ledger_table_display(store), use_container_width=True)
     finally:
         store.close()
-
-    if not rows:
-        st.info("No changes recorded yet.")
-        return
-
-    st.dataframe(rows, use_container_width=True, column_order=LEDGER_COLUMNS)
 
 
 PAGES = {
