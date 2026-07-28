@@ -1,0 +1,27 @@
+{
+  "name": "no_repeat_same_genre",
+  "description": "S2: asking the same genre three times surfaces a new film each turn.",
+  "turns": [
+    {
+      "user": "an action movie",
+      "invariants": [
+        {"kind": "no_repeat"},
+        {"kind": "recommends_genre", "genre": "Action"}
+      ]
+    },
+    {
+      "user": "an action movie",
+      "invariants": [
+        {"kind": "no_repeat"},
+        {"kind": "recommends_genre", "genre": "Action"}
+      ]
+    },
+    {
+      "user": "an action movie",
+      "invariants": [
+        {"kind": "no_repeat"},
+        {"kind": "recommends_genre", "genre": "Action"}
+      ]
+    }
+  ]
+}

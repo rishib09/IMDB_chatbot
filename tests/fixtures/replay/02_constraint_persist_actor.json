@@ -1,0 +1,21 @@
+{
+  "name": "constraint_persist_actor",
+  "description": "S1: an actor exclusion set in turn 1 still constrains later turns.",
+  "turns": [
+    {
+      "user": "action movies without Keanu Reeves",
+      "invariants": [
+        {"kind": "constraint_holds", "exclude_actors": ["Keanu Reeves"]},
+        {"kind": "recommends_genre", "genre": "Action"}
+      ]
+    },
+    {
+      "user": "another action movie",
+      "invariants": [
+        {"kind": "constraint_holds", "exclude_actors": ["Keanu Reeves"]},
+        {"kind": "recommends_genre", "genre": "Action"},
+        {"kind": "no_repeat"}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "name": "precedence_comedy",
+  "description": "Minimal precedence (#22): durable EXCLUDED(comedy) is suspended for a live comedy request, then re-applies to the next unrelated turn.",
+  "durable_excluded": ["Comedy"],
+  "turns": [
+    {
+      "user": "actually I want a comedy tonight",
+      "invariants": [
+        {"kind": "precedence_complies", "genre": "Comedy"},
+        {"kind": "recommends_genre", "genre": "Comedy"}
+      ]
+    },
+    {
+      "user": "something scary instead",
+      "invariants": [
+        {"kind": "constraint_holds", "exclude_genres": ["Comedy"]},
+        {"kind": "recommends_genre", "genre": "Horror"}
+      ]
+    }
+  ]
+}

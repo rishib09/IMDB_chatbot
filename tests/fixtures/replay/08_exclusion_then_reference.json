@@ -1,0 +1,22 @@
+{
+  "name": "exclusion_then_reference",
+  "description": "S1 + 7.5: a turn-1 exclusion survives a turn-2 reference that resolves the genre.",
+  "turns": [
+    {
+      "user": "thrillers but nothing scary",
+      "invariants": [
+        {"kind": "constraint_holds", "exclude_genres": ["Horror"]},
+        {"kind": "recommends_genre", "genre": "Thriller"}
+      ]
+    },
+    {
+      "user": "more like that",
+      "invariants": [
+        {"kind": "resolves_reference", "contains": ["thriller"]},
+        {"kind": "constraint_holds", "exclude_genres": ["Horror"]},
+        {"kind": "no_repeat"},
+        {"kind": "recommends_genre", "genre": "Thriller"}
+      ]
+    }
+  ]
+}

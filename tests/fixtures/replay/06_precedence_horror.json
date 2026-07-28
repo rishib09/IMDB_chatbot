@@ -1,0 +1,21 @@
+{
+  "name": "precedence_horror",
+  "description": "Minimal precedence (#22): durable EXCLUDED(horror) is suspended when the user asks for horror, but still holds on an unrelated turn.",
+  "durable_excluded": ["Horror"],
+  "turns": [
+    {
+      "user": "recommend a good horror movie",
+      "invariants": [
+        {"kind": "precedence_complies", "genre": "Horror"},
+        {"kind": "recommends_genre", "genre": "Horror"}
+      ]
+    },
+    {
+      "user": "show me a comedy",
+      "invariants": [
+        {"kind": "constraint_holds", "exclude_genres": ["Horror"]},
+        {"kind": "recommends_genre", "genre": "Comedy"}
+      ]
+    }
+  ]
+}

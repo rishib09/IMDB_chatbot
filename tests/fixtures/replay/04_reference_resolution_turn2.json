@@ -1,0 +1,21 @@
+{
+  "name": "reference_resolution_turn2",
+  "description": "Section 7.5: turn-2 'that' resolves to turn-1's request plus a new exclusion.",
+  "turns": [
+    {
+      "user": "action movies",
+      "invariants": [
+        {"kind": "recommends_genre", "genre": "Action"}
+      ]
+    },
+    {
+      "user": "something like that but without Keanu Reeves",
+      "invariants": [
+        {"kind": "resolves_reference", "contains": ["action"]},
+        {"kind": "constraint_holds", "exclude_actors": ["Keanu Reeves"]},
+        {"kind": "no_repeat"},
+        {"kind": "recommends_genre", "genre": "Action"}
+      ]
+    }
+  ]
+}
