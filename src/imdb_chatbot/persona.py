@@ -33,6 +33,7 @@ class Intent(str, Enum):
 
     GREETING = "greeting"  # small talk: hi / hello / thanks / bye
     META = "meta"  # who/what are you, purpose, capabilities, help
+    CHITCHAT = "chitchat"  # conversational (how are you, tell me a joke) -> LLM reply
     SEARCH = "search"  # a genuine movie request -> run the graph
 
 
@@ -91,6 +92,49 @@ _META_PHRASES = (
 # Bare messages that are meta on their own.
 _META_EXACT = {"help", "?", "??"}
 
+# Conversational / small-talk questions that are NOT movie searches. Matched as
+# substrings on the normalized message; these get a smart LLM reply (Maya) rather
+# than being run through retrieval. Deliberately a curated list - the offer in
+# the reply lets the user redirect if we misjudge.
+_CHITCHAT_PHRASES = (
+    "how are you",
+    "how are u",
+    "how r you",
+    "how are things",
+    "how is it going",
+    "how s it going",
+    "hows it going",
+    "how is everything",
+    "how do you do",
+    "how have you been",
+    "how you doing",
+    "how is your day",
+    "hows your day",
+    "how s your day",
+    "whats up",
+    "what s up",
+    "wassup",
+    "hows life",
+    "how s life",
+    "how is life",
+    "tell me a joke",
+    "say something funny",
+    "do you like movies",
+    "whats your favorite",
+    "what s your favorite",
+    "favourite movie",
+    "favorite movie",
+    "are you a robot",
+    "are you human",
+    "are you real",
+    "are you ok",
+    "whats new",
+    "what s new",
+    "nice to meet you",
+    "good to see you",
+    "how is your",
+)
+
 _PUNCT_RE = re.compile(r"[^a-z0-9\s]")
 _WS_RE = re.compile(r"\s+")
 
@@ -120,6 +164,9 @@ def classify_intent(query: str) -> Intent:
     if any(phrase in normalized for phrase in _META_PHRASES):
         return Intent.META
 
+    if any(phrase in normalized for phrase in _CHITCHAT_PHRASES):
+        return Intent.CHITCHAT
+
     return Intent.SEARCH
 
 
@@ -144,6 +191,18 @@ def generator_system_prompt(persona: dict[str, Any] | None = None) -> str:
     """Maya's system prompt, prepended to the generator slot."""
     persona = persona or load_persona()
     return str(persona.get("system_prompt", "")).strip()
+
+
+def chat_system_prompt(persona: dict[str, Any] | None = None) -> str:
+    """System prompt for the cheap LLM that answers CHITCHAT messages."""
+    persona = persona or load_persona()
+    return str(persona.get("chat_system_prompt", "")).strip()
+
+
+def chitchat_fallback(persona: dict[str, Any] | None = None) -> str:
+    """Deterministic conversational reply used when no LLM is available."""
+    persona = persona or load_persona()
+    return str(persona.get("chitchat", "")).strip()
 
 
 def persona_version(persona: dict[str, Any] | None = None) -> str:

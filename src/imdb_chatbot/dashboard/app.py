@@ -58,6 +58,27 @@ _PENDING_KEY = "pending_query"
 # Running per-session usage totals for the compact line below the input (#46).
 _SESSION_USAGE_KEY = "session_usage"
 
+# CSS that lifts Streamlit's pinned chat input a little and fixes a thin session
+# usage bar at the very bottom, so the running total sits BELOW the input box.
+_SESSION_FOOTER_CSS = """
+<style>
+[data-testid="stBottom"] { bottom: 1.9rem !important; }
+.session-usage-footer {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    z-index: 1000;
+    height: 1.9rem;
+    line-height: 1.9rem;
+    padding: 0 14px;
+    text-align: center;
+    font-size: 0.78rem;
+    color: #9aa0a6;
+    background: rgba(14, 17, 23, 0.94);
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+</style>
+"""
+
 
 def _store_path() -> str:
     return os.environ.get("TRACE_STORE_PATH", str(DEFAULT_STORE_PATH))
@@ -140,14 +161,16 @@ def _accumulate_usage(telemetry: TurnTelemetry) -> None:
 
 
 def _render_session_usage() -> None:
-    """A single compact session-total line, shown just above the input box (#46)."""
+    """A single compact session-total line, fixed below the input box (#46, #3)."""
     totals = st.session_state.get(_SESSION_USAGE_KEY)
     if not totals or not totals["turns"]:
         return
-    st.caption(
+    line = (
         f"Session: {totals['turns']} turn(s)  |  up {totals['input']:,} / down "
         f"{totals['output']:,} tok  |  est ${totals['cost']:.4f}"
     )
+    st.markdown(_SESSION_FOOTER_CSS, unsafe_allow_html=True)
+    st.markdown(f"<div class='session-usage-footer'>{line}</div>", unsafe_allow_html=True)
 
 
 def _render_response(reply: ChatReply, key_prefix: str = "") -> None:

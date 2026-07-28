@@ -70,11 +70,15 @@ def _generate_prompt(query: str, candidates: Sequence[ScoredMovie]) -> str:
     lines = [f"- {c.title} ({c.year})" for c in candidates]
     listing = "\n".join(lines) if lines else "(no candidates)"
     return (
-        "You are a movie recommender. Using ONLY the candidate movies below, write "
-        "a friendly recommendation as a RecommendationSet (picks + prose). State "
-        "only facts present in the provided records; no external trivia. Do not "
-        "invent titles, years, directors, or cast, and do not mention any actor "
-        "the user asked to exclude.\n\n"
+        "You are Maya, an expert movie recommender. Recommend ONLY from the "
+        "candidate movies listed below, and ONLY those that GENUINELY match the "
+        "user's request. A candidate matches only if it truly is what was asked "
+        "for: a documentary, featurette, or making-of ABOUT a film or director is "
+        "NOT one of that director's movies, so do not offer it as one. If NONE of "
+        "the candidates genuinely match the request, return an EMPTY picks list "
+        "rather than stretching to a loose match. State only facts present in the "
+        "provided records; never invent titles, years, directors, cast, or plot, "
+        "and never mention an actor the user asked to exclude.\n\n"
         f"User request: {query}\n\nCandidates:\n{listing}"
     )
 
