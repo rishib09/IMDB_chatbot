@@ -195,5 +195,6 @@ def test_pending_query_is_answered_and_usage_accumulates() -> None:
     # Session usage line accumulated exactly one turn.
     assert at.session_state["session_usage"]["turns"] == 1
     assert at.session_state["session_usage"]["input"] == 100
-    captions = " ".join(c.value for c in at.caption)
-    assert "Session: 1 turn(s)" in captions
+    # The session total is now a fixed footer rendered via st.markdown (#3).
+    markdown_all = " ".join(m.value for m in at.markdown)
+    assert "Session: 1 turn(s)" in markdown_all
