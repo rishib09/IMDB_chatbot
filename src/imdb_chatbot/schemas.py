@@ -28,15 +28,20 @@ class MovieRecord(BaseModel):
     director: str | None = None
     cast: list[str] = []
     plot: str | None = None
+    original_language: str | None = None  # ISO 639-1, e.g. "en", "ko", "hi"
     rating_raw: float | None = Field(default=None, ge=0, le=10)
     rating_z: dict[str, float] = {}  # per-region z-score {region: z}
-    metascore: float | None = None
+    vote_count: int | None = None  # TMDB vote count (popularity/quality gate, decision #4)
     certificate_raw: str | None = None
     certificate_norm: str | None = None  # {ALL, TEEN, MATURE, ADULT} or None
     certificate_system: str | None = None  # e.g. "MPAA", "CBFC"
     regions: list[str] = []  # origin countries, e.g. ["US","IN"]
     duration_min: float | None = None
     poster_url: HttpUrl | None = None
+    status: str | None = None  # TMDB release status, e.g. "Released"
+    budget: int | None = None
+    revenue: int | None = None
+    production_companies: list[str] = []  # company names
 
 
 class ParsedQuery(BaseModel):

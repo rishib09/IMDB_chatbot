@@ -96,6 +96,10 @@ def _genre_names(details: dict[str, Any]) -> list[str]:
     return [g["name"] for g in details.get("genres", []) or [] if g.get("name")]
 
 
+def _company_names(details: dict[str, Any]) -> list[str]:
+    return [c["name"] for c in details.get("production_companies", []) or [] if c.get("name")]
+
+
 def _poster_url(details: dict[str, Any]) -> str | None:
     path = details.get("poster_path")
     if not path:
@@ -186,14 +190,19 @@ def map_tmdb_movie(
         director=_director(details),
         cast=_cast_names(details),
         plot=details.get("overview") or None,
+        original_language=details.get("original_language") or None,
         rating_raw=details.get("vote_average"),
-        metascore=None,
+        vote_count=details.get("vote_count"),
         certificate_raw=cert_raw,
         certificate_norm=cert_norm,
         certificate_system=cert_system,
         regions=regions,
         duration_min=details.get("runtime"),
         poster_url=_poster_url(details),
+        status=details.get("status") or None,
+        budget=details.get("budget"),
+        revenue=details.get("revenue"),
+        production_companies=_company_names(details),
     )
 
 
