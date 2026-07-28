@@ -9,14 +9,14 @@ venv/
 build/
 dist/
 
-# Secrets — NEVER commit plaintext. Only encrypted blobs (if any) are committed.
-.env
+# --- Secrets (dotenvx) ---
+# `.env` is committed ENCRYPTED (values are ciphertext, safe to publish).
+# NEVER commit the private keys (`.env.keys`) or any plaintext variant.
+.env.keys
 .env.*
 !.env.example
 *.key
 *.agekey
-age.txt
-.env.keys
 
 # Data / built index artifacts (large; shipped separately)
 data/
