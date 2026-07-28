@@ -26,3 +26,21 @@ slots:
   judge:              # eval only, async
     default: deepseek/deepseek-chat
     temperature: 0
+
+# Approximate OpenRouter list prices in USD per 1,000,000 tokens. Used ONLY to
+# estimate a turn's cost when OpenRouter does not return an actual per-request
+# cost (the app requests usage.include, so real costs are preferred when present).
+# These are editable estimates - verify against https://openrouter.ai/models.
+pricing:
+  google/gemma-3-12b-it:
+    input: 0.05
+    output: 0.10
+  google/gemma-3-27b-it:
+    input: 0.10
+    output: 0.20
+  meta-llama/llama-3.1-8b-instruct:
+    input: 0.02
+    output: 0.03
+  deepseek/deepseek-chat:
+    input: 0.14
+    output: 0.28

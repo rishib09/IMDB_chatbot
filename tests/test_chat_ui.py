@@ -1,11 +1,17 @@
-"""Tests for the pure Chat-page render helpers.
+"""Tests for the Chat-page render helpers.
 
-Only the Streamlit-free functions in ``dashboard.render`` are exercised - no
-Streamlit server is started here.
+The bulk exercise the Streamlit-free functions in ``dashboard.render`` (no
+server started). The final test drives the whole page through Streamlit's
+``AppTest`` harness to cover the relax-button key-uniqueness invariant, which
+only breaks once the history holds more than one dead-end turn - something the
+pure-function tests cannot see.
 """
 
 from __future__ import annotations
 
+from streamlit.testing.v1 import AppTest
+
+from imdb_chatbot.dashboard.live import ChatReply, TurnTelemetry
 from imdb_chatbot.dashboard.render import (
     PLACEHOLDER_POSTER,
     is_fallback,
@@ -87,3 +93,67 @@ def test_relax_options_returns_independent_copies() -> None:
     first = relax_options()
     first[0]["label"] = "mutated"
     assert relax_options()[0]["label"] != "mutated"
+
+
+def _chat_page_script() -> None:
+    """Top-level script body for AppTest: render the Chat page only."""
+    from imdb_chatbot.dashboard.app import render_chat_page
+
+    render_chat_page()
+
+
+def test_two_dead_end_turns_do_not_collide_relax_button_keys() -> None:
+    """Two fallback turns in history must render without a duplicate-key crash.
+
+    Regression: relax-button keys were derived from the option label alone, so a
+    second dead-end turn re-rendered the identical keys and Streamlit raised
+    StreamlitDuplicateElementKey. Keying by history position fixes it.
+    """
+    fallback = ChatReply(
+        rec=RecommendationSet(picks=[], prose="I could not find a match."),
+        telemetry=None,
+    )
+    at = AppTest.from_function(_chat_page_script)
+    at.session_state["chat_history"] = [
+        {"role": "user", "text": "first query"},
+        {"role": "assistant", "reply": fallback},
+        {"role": "user", "text": "second query"},
+        {"role": "assistant", "reply": fallback},
+    ]
+
+    at.run()
+
+    assert not at.exception
+    # Both dead-end turns rendered their full relax button row.
+    assert len(at.button) == 2 * len(relax_options())
+
+
+def test_telemetry_strip_renders_model_tokens_and_cost() -> None:
+    """A reply carrying telemetry shows the model, token, and cost metrics."""
+    reply = ChatReply(
+        rec=RecommendationSet(
+            picks=[MovieRecommendation(title="Parasite", year=2019, reason="Tense.")],
+            prose="One pick.",
+        ),
+        telemetry=TurnTelemetry(
+            models={"generator": "deepseek/deepseek-chat"},
+            input_tokens=1234,
+            output_tokens=56,
+            cost_usd=0.0021,
+        ),
+    )
+    at = AppTest.from_function(_chat_page_script)
+    at.session_state["chat_history"] = [
+        {"role": "user", "text": "a pick please"},
+        {"role": "assistant", "reply": reply},
+    ]
+
+    at.run()
+
+    assert not at.exception
+    # Tokens uploaded / downloaded / cost -> three st.metric tiles.
+    assert len(at.metric) == 3
+    labels = {m.label for m in at.metric}
+    assert labels == {"Tokens uploaded", "Tokens downloaded", "Cost (est.)"}
+    captions = " ".join(c.value for c in at.caption)
+    assert "deepseek/deepseek-chat" in captions

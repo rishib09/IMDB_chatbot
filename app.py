@@ -64,6 +64,37 @@ def budget_exhausted(tracker: BudgetTracker | None = None) -> bool:
     return tracker.exhausted()
 
 
+def _ensure_live_chat_handler() -> str | None:
+    """Wire the real graph-backed Chat handler into the session, once.
+
+    Returns ``None`` on success, or a short human-readable reason why the live
+    handler is unavailable (so the Chat page can show an offline-mode note and
+    fall back to the deterministic stub instead of crashing). The expensive
+    resource bundle (index + embedder + retriever + models) is cached across
+    reruns and sessions; each session gets its own cheap handler + conversation.
+    """
+    import streamlit as st
+
+    if st.session_state.get("chat_handler") is not None:
+        return None
+
+    @st.cache_resource(show_spinner="Loading live index and models...")
+    def _resources():
+        from imdb_chatbot.dashboard.live import load_live_resources
+
+        return load_live_resources()
+
+    try:
+        resources = _resources()
+    except Exception as exc:  # noqa: BLE001 - degrade to the stub with a reason
+        return str(exc)
+
+    from imdb_chatbot.dashboard.live import build_live_chat_handler
+
+    st.session_state["chat_handler"] = build_live_chat_handler(resources)
+    return None
+
+
 def main() -> None:
     """Streamlit entry: L3 health gate -> (L2 budget notice) -> dashboard."""
     import streamlit as st
@@ -83,6 +114,10 @@ def main() -> None:
     if budget_exhausted():
         # L2: degrade to a clear banner rather than erroring on spend exhaustion.
         st.warning(L2_BANNER)
+
+    # Attach the real graph-backed Chat handler; record why if it can't be built
+    # so the Chat page can say so and fall back to the deterministic stub.
+    st.session_state["chat_offline_reason"] = _ensure_live_chat_handler()
 
     dashboard_main()
 

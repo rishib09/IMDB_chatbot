@@ -20,7 +20,7 @@ from collections.abc import Iterable
 
 from pydantic import BaseModel, Field
 
-from ..graph import GraphModels, RetrieverFn, TurnResult, run_turn
+from ..graph import GraphModels, RetrieverFn, TurnResult, UsageMeter, run_turn
 from ..schemas import TurnState
 from ..store import TraceStore
 
@@ -195,12 +195,16 @@ def run_session_turn(
     user_id: str | None = None,
     store: TraceStore | None = None,
     versions: dict[str, str] | None = None,
+    usage: UsageMeter | None = None,
+    pricing: dict[str, dict[str, float]] | None = None,
 ) -> TurnResult:
     """Run one turn with session memory applied, then update the session.
 
     This is the multi-turn entry point: history resolves references in the
     rewriter, standing exclusions and ``shown_movies`` constrain retrieval, and
-    the outcome is folded back so the next turn sees the updated state.
+    the outcome is folded back so the next turn sees the updated state. A
+    ``usage`` meter, when passed, carries the turn's token/cost totals into the
+    persisted trace.
     """
     state = build_turn_state(
         conversation,
@@ -214,6 +218,8 @@ def run_session_turn(
         models=models,
         store=store,
         versions=versions,
+        usage=usage,
+        pricing=pricing,
     )
     update_state_from_result(conversation, result)
     return result

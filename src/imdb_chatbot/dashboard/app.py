@@ -32,6 +32,7 @@ from .data import (
     metric_timeline,
     topline_strip,
 )
+from .live import ChatReply, TurnTelemetry
 from .render import is_fallback, recommendation_cards, relax_options
 
 # Traffic-light color -> a hex swatch for the topline strip.
@@ -45,8 +46,9 @@ _STATUS_HEX = {
 # Default trace-store location; override with TRACE_STORE_PATH.
 DEFAULT_STORE_PATH = Path(__file__).resolve().parents[3] / "data" / "traces.db"
 
-# A turn handler is the thin boundary over the graph: query -> RecommendationSet.
-ChatHandler = Callable[[str], RecommendationSet]
+# A turn handler is the thin boundary over the graph: query -> ChatReply
+# (the answer plus optional per-turn telemetry).
+ChatHandler = Callable[[str], ChatReply]
 
 _CHAT_HISTORY_KEY = "chat_history"
 
@@ -55,20 +57,22 @@ def _store_path() -> str:
     return os.environ.get("TRACE_STORE_PATH", str(DEFAULT_STORE_PATH))
 
 
-def _default_handler(query: str) -> RecommendationSet:
+def _default_handler(query: str) -> ChatReply:
     """Fallback handler used when no graph-backed handler is injected.
 
     Wiring the real graph needs a retriever + models bundle (network + index),
     so the default returns an empty set that exercises the relax-a-constraint
-    path. Callers inject a graph-backed handler to get real picks.
+    path, with no telemetry (no LLM ran). Callers inject a graph-backed handler
+    to get real picks and token/cost telemetry.
     """
-    return RecommendationSet(
+    rec = RecommendationSet(
         picks=[],
         prose=(
             "I could not find a match for that. Try relaxing one constraint "
             "using a quick reply below."
         ),
     )
+    return ChatReply(rec=rec, telemetry=None)
 
 
 def _render_cards(rec: RecommendationSet) -> None:
@@ -83,32 +87,53 @@ def _render_cards(rec: RecommendationSet) -> None:
             st.caption(card["reason"])
 
 
-def _render_fallback(rec: RecommendationSet) -> None:
-    """Render fallback prose plus deterministic relax-a-constraint buttons."""
+def _render_fallback(rec: RecommendationSet, key_prefix: str = "") -> None:
+    """Render fallback prose plus deterministic relax-a-constraint buttons.
+
+    ``key_prefix`` disambiguates the button keys: the same relax options are
+    rendered once per fallback turn in the history, so keying on the label alone
+    collides (StreamlitDuplicateElementKey) the moment two turns dead-end. The
+    caller passes the message's position in history to make each key unique.
+    """
     if rec.prose:
         st.write(rec.prose)
     columns = st.columns(len(relax_options()))
     for column, option in zip(columns, relax_options(), strict=True):
         with column:
-            if st.button(option["label"], key=f"relax-{option['label']}"):
+            if st.button(option["label"], key=f"relax-{key_prefix}-{option['label']}"):
                 _handle_turn(option["query"])
                 st.rerun()
 
 
-def _render_response(rec: RecommendationSet) -> None:
+def _render_telemetry(telemetry: TurnTelemetry) -> None:
+    """Show which model answered, tokens uploaded/downloaded, and the cost."""
+    models_txt = ", ".join(f"{slot}: {model}" for slot, model in telemetry.models.items())
+    st.caption(f"Connected model(s) -> {models_txt or 'n/a'}")
+    up, down, cost = st.columns(3)
+    up.metric("Tokens uploaded", f"{telemetry.input_tokens:,}")
+    down.metric("Tokens downloaded", f"{telemetry.output_tokens:,}")
+    cost.metric("Cost (est.)", f"${telemetry.cost_usd:.4f}")
+    if telemetry.degradation:
+        st.caption("degradation: " + ", ".join(telemetry.degradation))
+
+
+def _render_response(reply: ChatReply, key_prefix: str = "") -> None:
+    rec = reply.rec
     if is_fallback(rec):
-        _render_fallback(rec)
+        _render_fallback(rec, key_prefix)
     else:
         _render_cards(rec)
+    if reply.telemetry is not None:
+        _render_telemetry(reply.telemetry)
 
 
 def _handle_turn(query: str) -> None:
     """Run one turn: append the user message, call the handler, store the reply."""
     handler: ChatHandler = st.session_state.get("chat_handler", _default_handler)
-    rec = handler(query)
+    reply = handler(query)
     history = st.session_state.setdefault(_CHAT_HISTORY_KEY, [])
     history.append({"role": "user", "text": query})
-    history.append({"role": "assistant", "rec": rec})
+    history.append({"role": "assistant", "reply": reply})
 
 
 def render_chat_page(handler: ChatHandler | None = None) -> None:
@@ -116,13 +141,22 @@ def render_chat_page(handler: ChatHandler | None = None) -> None:
     if handler is not None:
         st.session_state["chat_handler"] = handler
 
+    # When the live graph handler could not be built, the entry point records a
+    # reason; show it once so the user knows recommendations are stubbed.
+    offline_reason = st.session_state.get("chat_offline_reason")
+    if offline_reason and st.session_state.get("chat_handler") is None:
+        st.info(
+            "Offline demo mode - real recommendations are disabled: "
+            f"{offline_reason}"
+        )
+
     history = st.session_state.setdefault(_CHAT_HISTORY_KEY, [])
-    for message in history:
+    for idx, message in enumerate(history):
         with st.chat_message(message["role"]):
             if message["role"] == "user":
                 st.write(message["text"])
             else:
-                _render_response(message["rec"])
+                _render_response(message["reply"], key_prefix=str(idx))
 
     prompt = st.chat_input("Ask for a movie recommendation")
     if prompt:
