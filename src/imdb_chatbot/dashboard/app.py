@@ -119,7 +119,11 @@ def _render_telemetry(telemetry: TurnTelemetry) -> None:
 
 def _render_response(reply: ChatReply, key_prefix: str = "") -> None:
     rec = reply.rec
-    if is_fallback(rec):
+    if reply.conversational:
+        # Persona reply (Maya's greeting / purpose): prose only, no relax buttons.
+        if rec.prose:
+            st.write(rec.prose)
+    elif is_fallback(rec):
         _render_fallback(rec, key_prefix)
     else:
         _render_cards(rec)

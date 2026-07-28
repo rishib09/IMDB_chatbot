@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..graph import GraphModels, RetrieverFn, UsageMeter
+from ..persona import Intent, classify_intent, persona_reply
 from ..schemas import ParsedQuery, RecommendationSet
 
 # A factory that builds the turn's GraphModels bound to a usage meter.
@@ -54,12 +55,17 @@ class TurnTelemetry:
 class ChatReply:
     """A chat handler's return value: the answer plus its telemetry.
 
-    ``telemetry`` is ``None`` for the deterministic stub handler (no LLM ran), so
-    the UI simply omits the telemetry strip in that case.
+    ``telemetry`` is ``None`` when no LLM ran (the deterministic stub, or a
+    persona/small-talk reply), so the UI omits the telemetry strip in that case.
+
+    ``conversational`` marks a persona reply (Maya's greeting / purpose): the UI
+    renders its prose as a plain message, WITHOUT the relax-a-constraint buttons
+    that a genuine empty-result search fallback shows.
     """
 
     rec: RecommendationSet
     telemetry: TurnTelemetry | None = None
+    conversational: bool = False
 
 
 @dataclass
@@ -94,6 +100,7 @@ def load_live_resources(
     from ..graph.usage import load_pricing
     from ..index.build import load_index
     from ..index.embedder import SentenceTransformerEmbedder
+    from ..persona import persona_version
     from ..retrieval.retrieve import HybridRetriever
     from ..store import TraceStore
 
@@ -137,7 +144,7 @@ def load_live_resources(
         versions={
             "index": str(ptr.get("active", "dev")),
             "model_config": "dev",
-            "prompt": "dev",
+            "prompt": persona_version(),
         },
         store=store,
     )
@@ -158,6 +165,17 @@ def build_live_chat_handler(
     conversation = ConversationState(session_id=str(uuid.uuid4()))
 
     def handler(query: str) -> ChatReply:
+        # Intent gate (ticket #44): small talk / meta questions get Maya's
+        # deterministic reply - no retrieval, no LLM, no cost - instead of being
+        # run through the movie pipeline.
+        intent = classify_intent(query)
+        if intent in (Intent.GREETING, Intent.META):
+            return ChatReply(
+                rec=persona_reply(intent),
+                telemetry=None,
+                conversational=True,
+            )
+
         meter = UsageMeter()
         models = resources.models_factory(meter)
         result = run_session_turn(

@@ -55,6 +55,12 @@ def load_live_index() -> dict[str, Any]:
     return _load_json("live_index.json")
 
 
+@lru_cache(maxsize=1)
+def load_persona() -> dict[str, Any]:
+    """Chatbot persona (Maya). Versioned prompt artifact `persona` (ticket #44)."""
+    return _load_yaml("persona.yaml")
+
+
 def get_secret(name: str, *, required: bool = True) -> str | None:
     """Resolve a secret from the environment by name.
 
