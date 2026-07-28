@@ -15,12 +15,21 @@ dependencies = [
     "python-dotenv>=1.0",
     "streamlit>=1.30",
     "httpx>=0.27",
+    "numpy>=1.26",
+    "faiss-cpu>=1.8",
+    "rank-bm25>=0.2.2",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
     "ruff>=0.5",
+]
+# The real embedder pulls sentence-transformers (and torch). Kept OUT of the
+# base deps so tests and CI stay light; install with ".[embed]" to build a real
+# semantic index.
+embed = [
+    "sentence-transformers>=2.7",
 ]
 
 [tool.hatch.build.targets.wheel]
