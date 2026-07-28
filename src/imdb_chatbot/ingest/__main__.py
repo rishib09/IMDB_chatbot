@@ -15,6 +15,27 @@ import sys
 from ..store import TraceStore
 from .tmdb import run_ingest
 
+# Named region groups expand to ISO 3166-1 country codes so you can pull a whole
+# region with one token, e.g. --regions KR EUROPE LATAM. Add a group here or pass
+# raw country codes directly. TMDB /discover is capped at 500 pages (10k results)
+# per query, so each country code yields at most ~10k movies (decision: default
+# to that ceiling rather than building a year-partitioning crawler).
+REGION_GROUPS: dict[str, list[str]] = {
+    "EUROPE": ["GB", "FR", "DE", "IT", "ES"],
+    "LATAM": ["MX", "BR", "AR", "CL", "CO"],
+}
+
+
+def expand_regions(regions: list[str]) -> list[str]:
+    """Expand any group names into country codes, de-duplicated, order preserved."""
+    out: list[str] = []
+    for region in regions:
+        key = region.upper()
+        for code in REGION_GROUPS.get(key, [key]):
+            if code not in out:
+                out.append(code)
+    return out
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="imdb_chatbot.ingest")
@@ -22,7 +43,7 @@ def main(argv: list[str] | None = None) -> int:
         "--regions",
         nargs="+",
         default=["US", "IN"],
-        help="ISO 3166-1 alpha-2 origin-country codes to pull (default: US IN).",
+        help="Country codes or group names (EUROPE, LATAM) to pull. Default: US IN.",
     )
     parser.add_argument(
         "--db",
@@ -32,16 +53,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--max-pages",
         type=int,
-        default=1,
-        help="TMDB discover pages to pull per region (default: 1).",
+        default=500,
+        help="TMDB discover pages per country (20 results/page; default 500 = ~10k, "
+        "the TMDB discover ceiling).",
     )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
+    regions = expand_regions(args.regions)
     store = TraceStore(args.db)
     try:
-        stats = run_ingest(store, regions=args.regions, max_pages=args.max_pages)
+        stats = run_ingest(store, regions=regions, max_pages=args.max_pages)
     finally:
         store.close()
 
