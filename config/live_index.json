@@ -1,0 +1,4 @@
+{
+  "active": null,
+  "note": "Set by the index build (ticket #15) to {dataset_version}_{embedder}_{chunk_policy}. Hot-swap = flip this pointer; rollback = revert it."
+}

@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+
+# --- Secrets (dotenvx) ---
+# `.env` is committed ENCRYPTED (values are ciphertext, safe to publish).
+# NEVER commit the private keys (`.env.keys`) or any plaintext variant.
+.env.keys
+.env.*
+!.env.example
+*.key
+*.agekey
+
+# Data / built index artifacts (large; shipped separately)
+data/
+*.faiss
+*.bm25.pkl
+*.sqlite
+*.duckdb
+
+# OS
+.DS_Store
+Thumbs.db
