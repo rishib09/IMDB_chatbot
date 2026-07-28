@@ -51,6 +51,12 @@ DEFAULT_STORE_PATH = Path(__file__).resolve().parents[3] / "data" / "traces.db"
 ChatHandler = Callable[[str], ChatReply]
 
 _CHAT_HISTORY_KEY = "chat_history"
+# A submitted-but-not-yet-answered query. Set on submit, consumed on the next
+# rerun so the assistant bubble can show a loading spinner WHILE the turn runs
+# (ticket #45). Cleared once the reply is stored.
+_PENDING_KEY = "pending_query"
+# Running per-session usage totals for the compact line below the input (#46).
+_SESSION_USAGE_KEY = "session_usage"
 
 
 def _store_path() -> str:
@@ -101,20 +107,47 @@ def _render_fallback(rec: RecommendationSet, key_prefix: str = "") -> None:
     for column, option in zip(columns, relax_options(), strict=True):
         with column:
             if st.button(option["label"], key=f"relax-{key_prefix}-{option['label']}"):
-                _handle_turn(option["query"])
+                _submit_query(option["query"])
                 st.rerun()
 
 
 def _render_telemetry(telemetry: TurnTelemetry) -> None:
-    """Show which model answered, tokens uploaded/downloaded, and the cost."""
-    models_txt = ", ".join(f"{slot}: {model}" for slot, model in telemetry.models.items())
-    st.caption(f"Connected model(s) -> {models_txt or 'n/a'}")
-    up, down, cost = st.columns(3)
-    up.metric("Tokens uploaded", f"{telemetry.input_tokens:,}")
-    down.metric("Tokens downloaded", f"{telemetry.output_tokens:,}")
-    cost.metric("Cost (est.)", f"${telemetry.cost_usd:.4f}")
+    """One compact line per turn: answer model, tokens up/down, cost (#46).
+
+    Replaces the old three large metric tiles - the numbers were dominating the
+    conversation. The generator is the answer model; other slots are omitted here
+    (the full per-slot breakdown still lives in the persisted TurnTrace).
+    """
+    model = telemetry.models.get("generator") or next(iter(telemetry.models.values()), "n/a")
+    line = (
+        f"{model}  |  up {telemetry.input_tokens:,} / down "
+        f"{telemetry.output_tokens:,} tok  |  est ${telemetry.cost_usd:.4f}"
+    )
     if telemetry.degradation:
-        st.caption("degradation: " + ", ".join(telemetry.degradation))
+        line += "  |  degraded: " + ", ".join(telemetry.degradation)
+    st.caption(line)
+
+
+def _accumulate_usage(telemetry: TurnTelemetry) -> None:
+    """Fold one turn's usage into the running session totals."""
+    totals = st.session_state.setdefault(
+        _SESSION_USAGE_KEY, {"input": 0, "output": 0, "cost": 0.0, "turns": 0}
+    )
+    totals["input"] += telemetry.input_tokens
+    totals["output"] += telemetry.output_tokens
+    totals["cost"] += telemetry.cost_usd
+    totals["turns"] += 1
+
+
+def _render_session_usage() -> None:
+    """A single compact session-total line, shown just above the input box (#46)."""
+    totals = st.session_state.get(_SESSION_USAGE_KEY)
+    if not totals or not totals["turns"]:
+        return
+    st.caption(
+        f"Session: {totals['turns']} turn(s)  |  up {totals['input']:,} / down "
+        f"{totals['output']:,} tok  |  est ${totals['cost']:.4f}"
+    )
 
 
 def _render_response(reply: ChatReply, key_prefix: str = "") -> None:
@@ -131,13 +164,34 @@ def _render_response(reply: ChatReply, key_prefix: str = "") -> None:
         _render_telemetry(reply.telemetry)
 
 
-def _handle_turn(query: str) -> None:
-    """Run one turn: append the user message, call the handler, store the reply."""
-    handler: ChatHandler = st.session_state.get("chat_handler", _default_handler)
-    reply = handler(query)
+def _submit_query(query: str) -> None:
+    """Record a user message and mark it pending so the next rerun answers it.
+
+    Splitting submit from answer (ticket #45) lets the user's message and a
+    loading spinner render immediately, before the (multi-second) turn runs.
+    """
     history = st.session_state.setdefault(_CHAT_HISTORY_KEY, [])
     history.append({"role": "user", "text": query})
+    st.session_state[_PENDING_KEY] = query
+
+
+def _process_pending() -> None:
+    """Answer the pending query inside an assistant bubble, with a live spinner."""
+    pending = st.session_state.get(_PENDING_KEY)
+    if pending is None:
+        return
+    handler: ChatHandler = st.session_state.get("chat_handler", _default_handler)
+    history = st.session_state.setdefault(_CHAT_HISTORY_KEY, [])
+    with st.chat_message("assistant"):
+        with st.spinner("Maya is thinking..."):
+            reply = handler(pending)
+        # key_prefix = the index this message will occupy once appended, so any
+        # relax buttons keep unique keys across the following reruns.
+        _render_response(reply, key_prefix=str(len(history)))
     history.append({"role": "assistant", "reply": reply})
+    if reply.telemetry is not None:
+        _accumulate_usage(reply.telemetry)
+    st.session_state[_PENDING_KEY] = None
 
 
 def render_chat_page(handler: ChatHandler | None = None) -> None:
@@ -162,9 +216,15 @@ def render_chat_page(handler: ChatHandler | None = None) -> None:
             else:
                 _render_response(message["reply"], key_prefix=str(idx))
 
+    # Answer a just-submitted query (renders the spinner in-line, below history).
+    _process_pending()
+
+    # Compact running usage line, just above the input (#46).
+    _render_session_usage()
+
     prompt = st.chat_input("Ask for a movie recommendation")
     if prompt:
-        _handle_turn(prompt)
+        _submit_query(prompt)
         st.rerun()
 
 
