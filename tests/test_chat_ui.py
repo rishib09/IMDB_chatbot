@@ -151,9 +151,49 @@ def test_telemetry_strip_renders_model_tokens_and_cost() -> None:
     at.run()
 
     assert not at.exception
-    # Tokens uploaded / downloaded / cost -> three st.metric tiles.
-    assert len(at.metric) == 3
-    labels = {m.label for m in at.metric}
-    assert labels == {"Tokens uploaded", "Tokens downloaded", "Cost (est.)"}
+    # Compact single-line telemetry (#46): a caption, NOT three big metric tiles.
+    assert len(at.metric) == 0
     captions = " ".join(c.value for c in at.caption)
     assert "deepseek/deepseek-chat" in captions
+    assert "1,234" in captions  # tokens uploaded, formatted
+    assert "$0.0021" in captions  # cost
+
+
+def _telemetry_reply():
+    return ChatReply(
+        rec=RecommendationSet(
+            picks=[MovieRecommendation(title="Dune", year=2021, reason="Epic sci-fi.")],
+            prose="One pick.",
+        ),
+        telemetry=TurnTelemetry(
+            models={"generator": "deepseek/deepseek-chat"},
+            input_tokens=100,
+            output_tokens=50,
+            cost_usd=0.001,
+        ),
+    )
+
+
+def _fake_reply_handler(query: str) -> ChatReply:
+    return _telemetry_reply()
+
+
+def test_pending_query_is_answered_and_usage_accumulates() -> None:
+    """A submitted (pending) query is answered on rerun and folds into session usage."""
+    at = AppTest.from_function(_chat_page_script)
+    at.session_state["chat_handler"] = _fake_reply_handler
+    at.session_state["chat_history"] = [{"role": "user", "text": "a sci-fi movie"}]
+    at.session_state["pending_query"] = "a sci-fi movie"
+
+    at.run()
+
+    assert not at.exception
+    # The pending query was consumed and the assistant reply rendered.
+    assert at.session_state["pending_query"] is None
+    markdown = " ".join(m.value for m in at.markdown)
+    assert "Dune" in markdown
+    # Session usage line accumulated exactly one turn.
+    assert at.session_state["session_usage"]["turns"] == 1
+    assert at.session_state["session_usage"]["input"] == 100
+    captions = " ".join(c.value for c in at.caption)
+    assert "Session: 1 turn(s)" in captions
