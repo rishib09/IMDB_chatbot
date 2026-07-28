@@ -1,0 +1,15 @@
+# US certificate map (MPAA) -> normalized audience buckets.
+#
+# Adding a region is a config change, not a code change: drop a new YAML next to
+# this one and register its region code (see ingest/certificates.py). The core
+# transform never learns region-specific ratings.
+#
+# Buckets: ALL, TEEN, MATURE, ADULT. Unknown certs -> certificate_norm=None.
+
+system: MPAA
+map:
+  G: ALL
+  PG: ALL
+  "PG-13": TEEN
+  R: MATURE
+  "NC-17": ADULT

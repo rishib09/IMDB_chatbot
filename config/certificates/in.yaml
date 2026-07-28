@@ -1,0 +1,17 @@
+# India certificate map (CBFC) -> normalized audience buckets.
+#
+# Adding a region is a config change, not a code change: drop a new YAML next to
+# this one and register its region code (see ingest/certificates.py). The core
+# transform never learns region-specific ratings.
+#
+# Buckets: ALL, TEEN, MATURE, ADULT. Unknown certs -> certificate_norm=None.
+
+system: CBFC
+map:
+  U: ALL
+  UA: TEEN
+  "UA 7+": TEEN
+  "UA 13+": TEEN
+  "UA 16+": TEEN
+  A: MATURE
+  S: ADULT

@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Self
 
-from .schemas import ChangeRecord, TurnTrace
+from .schemas import ChangeRecord, MovieRecord, TurnTrace
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS movies (
@@ -181,6 +181,58 @@ class TraceStore:
         if row is None:
             return None
         return TurnTrace.model_validate_json(row["data"])
+
+    # -- movies (catalog) ------------------------------------------------------
+
+    def write_movie(self, movie: MovieRecord) -> None:
+        """Upsert a validated catalog row, keyed by ``tmdb_id`` (idempotent)."""
+        payload = movie.model_dump_json()
+
+        def _do(conn: sqlite3.Connection) -> None:
+            conn.execute(
+                "INSERT OR REPLACE INTO movies "
+                "(tmdb_id, title, year, data) VALUES (?, ?, ?, ?)",
+                (movie.tmdb_id, movie.title, movie.year, payload),
+            )
+
+        self._submit(_do)
+
+    def read_movie(self, tmdb_id: int) -> MovieRecord | None:
+        with self._read_lock:
+            row = self._read_conn.execute(
+                "SELECT data FROM movies WHERE tmdb_id = ?", (tmdb_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        return MovieRecord.model_validate_json(row["data"])
+
+    def count_movies(self) -> int:
+        with self._read_lock:
+            return self._read_conn.execute("SELECT COUNT(*) FROM movies").fetchone()[0]
+
+    # -- rejects (quarantine) --------------------------------------------------
+
+    def write_reject(self, reason: str, data: str) -> None:
+        """Quarantine a payload that failed validation, with the reason text.
+
+        ``data`` is the raw source payload serialized as a JSON string; it is
+        never silently dropped so failures stay auditable.
+        """
+        from datetime import UTC, datetime
+
+        ts = datetime.now(UTC).isoformat()
+
+        def _do(conn: sqlite3.Connection) -> None:
+            conn.execute(
+                "INSERT INTO rejects (ts, reason, data) VALUES (?, ?, ?)",
+                (ts, reason, data),
+            )
+
+        self._submit(_do)
+
+    def count_rejects(self) -> int:
+        with self._read_lock:
+            return self._read_conn.execute("SELECT COUNT(*) FROM rejects").fetchone()[0]
 
     # -- change ledger ---------------------------------------------------------
 
