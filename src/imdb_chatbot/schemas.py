@@ -89,6 +89,15 @@ class TurnState(BaseModel):
     user_id: str | None = None
     raw_query: str
     rewritten_query: str | None = None
+    # Session memory (ticket #21), seeded per turn from ``ConversationState``:
+    # ``history`` is the short-term window the rewriter reads to resolve
+    # references; ``shown_movies`` and ``session_exclude_*`` are the standing
+    # constraints carried into retrieval. All default empty -> a single-turn run
+    # behaves exactly as before.
+    history: list[str] = []
+    shown_movies: list[int] = []
+    session_exclude_actors: list[str] = []
+    session_exclude_genres: list[str] = []
     parsed: ParsedQuery | None = None
     retrieved: list[ScoredMovie] = []
     candidates: list[ScoredMovie] = []

@@ -102,7 +102,9 @@ def _make_rewrite(models: GraphModels, collector: TraceCollector):
         # Rewriter is optional: on any failure, skip and use the raw query,
         # recording a degradation flag (PRD section 7.3).
         try:
-            rewritten = models.rewrite(state.raw_query, [])
+            # History-aware: the rewriter reads the session's short-term window
+            # (ticket #21) to resolve references like "something like that".
+            rewritten = models.rewrite(state.raw_query, state.history)
             if not rewritten or not str(rewritten).strip():
                 raise ValueError("empty rewrite")
             return {"rewritten_query": str(rewritten).strip()}
@@ -140,12 +142,37 @@ def _make_extract(models: GraphModels, collector: TraceCollector):
     return extract
 
 
+def _session_merged_parsed(state: TurnState) -> ParsedQuery:
+    """Fold the session's standing exclusions (ticket #21) into this turn's parse.
+
+    Exclusions set in an earlier turn are carried on ``TurnState`` and unioned
+    into ``parsed`` here so they still constrain retrieval on later turns.
+    """
+    parsed = state.parsed or ParsedQuery()
+    if not (state.session_exclude_actors or state.session_exclude_genres):
+        return parsed
+    return parsed.model_copy(
+        update={
+            "exclude_actors": sorted(
+                {*parsed.exclude_actors, *state.session_exclude_actors}
+            ),
+            "exclude_genres": sorted(
+                {*parsed.exclude_genres, *state.session_exclude_genres}
+            ),
+        }
+    )
+
+
 def _make_retrieve(retriever: RetrieverFn, collector: TraceCollector):
     @traced("retrieve", collector)
     def retrieve(state: TurnState) -> dict:
-        parsed = state.parsed or ParsedQuery()
+        parsed = _session_merged_parsed(state)
         retrieved = list(retriever(_effective_query(state), parsed))
-        return {"retrieved": retrieved}
+        # Session no-repeat guarantee (ticket #21): drop anything already shown.
+        if state.shown_movies:
+            shown = set(state.shown_movies)
+            retrieved = [m for m in retrieved if m.tmdb_id not in shown]
+        return {"retrieved": retrieved, "parsed": parsed}
 
     return retrieve
 
