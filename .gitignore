@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+
+# Secrets — NEVER commit plaintext. Only encrypted blobs (if any) are committed.
+.env
+.env.*
+!.env.example
+*.key
+*.agekey
+age.txt
+.env.keys
+
+# Data / built index artifacts (large; shipped separately)
+data/
+*.faiss
+*.bm25.pkl
+*.sqlite
+*.duckdb
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,25 @@
+# Security / cost limit ladder (§5.6). All values are tunable, gated knobs (§8.4).
+# Presets accepted as-is for the MVP (decision #7); per-day + backstop set by #7.
+
+per_query:
+  input_max_chars: 500        # UI cap
+  input_max_tokens: 150       # server-side, authoritative
+  context_max_tokens: 2000
+  max_tokens: 400             # on every LLM call — the injection backstop
+
+per_turn:
+  max_retries_per_slot: 2
+
+per_session:
+  max_turns: 30
+
+per_day:
+  # $-denominated, production live-serving only (eval budget is separate).
+  # Exhaustion degrades to L2 LLM-free mode (§5.5), never an outage.
+  production_budget_usd: 3.0
+
+backstop:
+  # OpenRouter provider-level spend limit, set on the provider dashboard, ABOVE
+  # the per-day app budget so app-level L2 trips first. Any hit is an incident.
+  provider_monthly_limit_usd: 50
+  note: "Configured on the OpenRouter dashboard, not in code."

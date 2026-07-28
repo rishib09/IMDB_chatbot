@@ -1,0 +1,28 @@
+# Model slots resolved via OpenRouter (LangChain init_chat_model, base_url below).
+# Versioned artifact `model_config` — swapping any slot is a gated config edit (§8.4).
+#
+# NOTE (decision #8): `google/gemma-3-9b-it` from the PRD is a phantom slug — no
+# Gemma-3 9B exists. Rewriter/extractor repointed to gemma-3-12b (fallback llama-3.1-8b).
+# Extractor uses json_schema structured output + provider.require_parameters.
+
+base_url: https://openrouter.ai/api/v1
+secret: OPENROUTER_API_KEY
+
+slots:
+  rewriter:
+    default: google/gemma-3-12b-it
+    fallback: meta-llama/llama-3.1-8b-instruct
+    temperature: 0
+  extractor:
+    default: google/gemma-3-12b-it
+    fallback: meta-llama/llama-3.1-8b-instruct
+    temperature: 0
+    structured_output: json_schema
+    require_parameters: true
+  generator:
+    default: deepseek/deepseek-chat
+    fallback: google/gemma-3-27b-it
+    temperature: 0.7
+  judge:              # eval only, async
+    default: deepseek/deepseek-chat
+    temperature: 0
