@@ -21,7 +21,7 @@ from __future__ import annotations
 import queue
 import sqlite3
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Self
@@ -209,6 +209,28 @@ class TraceStore:
     def count_movies(self) -> int:
         with self._read_lock:
             return self._read_conn.execute("SELECT COUNT(*) FROM movies").fetchone()[0]
+
+    def read_all_movies(self) -> list[MovieRecord]:
+        """Return every catalog row, ordered by ``tmdb_id`` (read-only).
+
+        Reads go through the read connection only, so this never needs the write
+        lock: an ingest process may keep writing to the same corpus DB under WAL
+        while an index build iterates the catalog here.
+        """
+        with self._read_lock:
+            rows = self._read_conn.execute(
+                "SELECT data FROM movies ORDER BY tmdb_id"
+            ).fetchall()
+        return [MovieRecord.model_validate_json(row["data"]) for row in rows]
+
+    def iter_movies(self) -> Iterator[MovieRecord]:
+        """Iterate every catalog row ordered by ``tmdb_id`` (read-only).
+
+        Convenience wrapper over :meth:`read_all_movies`. The snapshot is taken
+        eagerly under the read lock, then yielded, so iterating never holds the
+        lock across caller work.
+        """
+        yield from self.read_all_movies()
 
     # -- rejects (quarantine) --------------------------------------------------
 
