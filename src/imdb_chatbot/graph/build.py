@@ -39,6 +39,7 @@ from ..store import TraceStore
 from .gate4 import run_gate4
 from .models import GraphModels
 from .tracing import TraceCollector, serialize_trace, traced
+from .usage import UsageMeter
 
 # Injected retriever: (rewritten_query, parsed) -> ranked candidates.
 RetrieverFn = Callable[[str, ParsedQuery], Sequence[ScoredMovie]]
@@ -351,18 +352,23 @@ def run_turn(
     models: GraphModels,
     store: TraceStore | None = None,
     versions: dict[str, str] | None = None,
+    usage: UsageMeter | None = None,
+    pricing: dict[str, dict[str, float]] | None = None,
 ) -> TurnResult:
     """Run one conversational turn end-to-end and serialize a ``TurnTrace``.
 
     A fresh ``TraceCollector`` is created per call so timings never bleed between
     turns. When ``store`` is provided the resulting trace is persisted (the trace
-    is the system-of-record for the turn). Returns both the final state and trace.
+    is the system-of-record for the turn). When a ``usage`` meter is supplied its
+    token totals and cost are folded into the trace. Returns state and trace.
     """
     collector = TraceCollector()
     graph = build_graph(retriever=retriever, models=models, collector=collector)
     result = graph.invoke(state)
     final = TurnState.model_validate(result)
-    trace = serialize_trace(final, collector, versions=versions)
+    trace = serialize_trace(
+        final, collector, versions=versions, usage=usage, pricing=pricing
+    )
     if store is not None:
         store.write_trace(trace)
     return TurnResult(state=final, trace=trace)

@@ -22,17 +22,23 @@ from .build import RetrieverFn, TurnResult, build_graph, run_turn
 from .gate4 import Gate4Result, run_gate4
 from .models import GraphModels, build_models
 from .tracing import TraceCollector, serialize_trace, traced
+from .usage import SlotUsage, UsageMeter, estimate_cost, load_pricing, usage_from_message
 
 __all__ = [
     "Gate4Result",
     "GraphModels",
     "RetrieverFn",
+    "SlotUsage",
     "TraceCollector",
     "TurnResult",
+    "UsageMeter",
     "build_graph",
     "build_models",
+    "estimate_cost",
+    "load_pricing",
     "run_gate4",
     "run_turn",
     "serialize_trace",
     "traced",
+    "usage_from_message",
 ]

@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from ..schemas import TurnState, TurnTrace
+from .usage import UsageMeter, estimate_cost
 
 # A node returns a dict of TurnState field updates (LangGraph merges them).
 NodeFn = Callable[[TurnState], dict[str, Any]]
@@ -78,13 +79,28 @@ def serialize_trace(
     collector: TraceCollector,
     *,
     versions: dict[str, str] | None = None,
+    usage: UsageMeter | None = None,
+    pricing: dict[str, dict[str, float]] | None = None,
 ) -> TurnTrace:
     """Snapshot the final ``TurnState`` into an immutable ``TurnTrace``.
 
     ``versions`` supplies the prompt / model_config / index artifact versions;
     where a real version is not available yet a ``"dev"`` placeholder is used.
+
+    ``usage`` (a per-turn ``UsageMeter``) populates the trace's ``token_usage``
+    and ``cost_usd`` - the system-of-record for per-turn spend that the daily
+    budget tracker sums. Absent a meter both stay at their empty defaults.
     """
     versions = versions or {}
+    token_usage: dict[str, int] = {}
+    cost_usd = 0.0
+    if usage is not None:
+        token_usage = {
+            "input_tokens": usage.input_tokens,
+            "output_tokens": usage.output_tokens,
+            "total_tokens": usage.total_tokens,
+        }
+        cost_usd = estimate_cost(usage, pricing)
     return TurnTrace(
         trace_id=state.trace_id,
         ts=datetime.now(UTC),
@@ -101,6 +117,8 @@ def serialize_trace(
         extract_retries=state.extract_retries,
         gen_retries=state.gen_retries,
         timings_ms=dict(collector.timings_ms),
+        token_usage=token_usage,
+        cost_usd=cost_usd,
         degradation=state.degradation,
         prompt_version=versions.get("prompt", "dev"),
         model_config_version=versions.get("model_config", "dev"),

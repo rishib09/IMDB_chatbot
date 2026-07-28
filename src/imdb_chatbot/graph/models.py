@@ -22,6 +22,7 @@ from typing import Any
 
 from ..config import get_secret, load_models_config
 from ..schemas import ParsedQuery, RecommendationSet, ScoredMovie
+from .usage import UsageMeter, usage_from_message
 
 RewriteFn = Callable[[str, Sequence[Any]], str]
 ExtractFn = Callable[[str], ParsedQuery]
@@ -82,47 +83,83 @@ def _generate_prompt(query: str, candidates: Sequence[ScoredMovie]) -> str:
 
 
 def _init_slot_model(slot: str, cfg: dict[str, Any]) -> Any:
-    """Build one LangChain chat model for ``slot`` from a models.yaml dict.
+    """Build one OpenRouter-backed chat model for ``slot`` from a models.yaml dict.
 
     Imported lazily so importing this module (and running the fake-model tests)
-    never pulls LangChain or touches the network.
+    never pulls LangChain or touches the network. Uses ``ChatOpenAI`` directly
+    (OpenRouter is OpenAI-API compatible) and asks OpenRouter to include the real
+    per-request cost in the usage block so the trace can report actual spend.
     """
-    try:
-        from langchain.chat_models import init_chat_model
-    except ImportError:  # pragma: no cover - depends on installed extras
-        from langchain_core.language_models import init_chat_model  # type: ignore[no-redef]
+    from langchain_openai import ChatOpenAI
 
     slot_cfg = cfg["slots"][slot]
-    return init_chat_model(
-        slot_cfg["default"],
-        model_provider="openai",  # OpenRouter is OpenAI-API compatible
+    return ChatOpenAI(
+        model=slot_cfg["default"],
         base_url=cfg["base_url"],
         api_key=get_secret(cfg["secret"]),
         temperature=slot_cfg.get("temperature", 0),
+        # OpenRouter returns usage.cost (and detailed token usage) when asked.
+        extra_body={"usage": {"include": True}},
     )
 
 
-def build_models(cfg: dict[str, Any] | None = None) -> GraphModels:
+def build_models(
+    cfg: dict[str, Any] | None = None,
+    *,
+    meter: UsageMeter | None = None,
+) -> GraphModels:
     """Wire the real OpenRouter-backed ``GraphModels`` from ``config/models.yaml``.
 
     Tests do NOT call this - they construct ``GraphModels`` with fakes. It is only
     exercised at runtime when a live ``OPENROUTER_API_KEY`` is available.
+
+    When a ``meter`` is supplied, each slot's token usage / model / cost is
+    recorded into it after every invoke (the extractor and generator use
+    ``include_raw=True`` so the underlying ``AIMessage`` - and its usage metadata -
+    survives structured-output parsing).
     """
     cfg = cfg or load_models_config()
 
     rewriter = _init_slot_model("rewriter", cfg)
-    extractor = _init_slot_model("extractor", cfg).with_structured_output(ParsedQuery)
-    generator = _init_slot_model("generator", cfg).with_structured_output(RecommendationSet)
+    extractor = _init_slot_model("extractor", cfg).with_structured_output(
+        ParsedQuery, include_raw=True
+    )
+    generator = _init_slot_model("generator", cfg).with_structured_output(
+        RecommendationSet, include_raw=True
+    )
+
+    def _record(slot: str, raw_message: Any) -> None:
+        if meter is None:
+            return
+        input_tokens, output_tokens, model, cost = usage_from_message(raw_message)
+        meter.record(
+            slot,
+            model=model or cfg["slots"][slot]["default"],
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            reported_cost_usd=cost,
+        )
 
     def rewrite(raw_query: str, history: Sequence[Any]) -> str:
         resp = rewriter.invoke(_rewrite_prompt(raw_query, history))
+        _record("rewriter", resp)
         text = getattr(resp, "content", resp)
         return str(text).strip()
 
     def extract(query: str) -> ParsedQuery:
-        return extractor.invoke(_extract_prompt(query))
+        out = extractor.invoke(_extract_prompt(query))
+        _record("extractor", out.get("raw"))
+        parsed = out.get("parsed")
+        if parsed is None:
+            raise ValueError("extractor returned no parsed output")
+        return parsed
 
     def generate(query: str, candidates: Sequence[ScoredMovie]) -> RecommendationSet:
-        return generator.invoke(_generate_prompt(query, candidates))
+        out = generator.invoke(_generate_prompt(query, candidates))
+        _record("generator", out.get("raw"))
+        response = out.get("parsed")
+        if response is None:
+            raise ValueError("generator returned no parsed output")
+        return response
 
     return GraphModels(rewrite=rewrite, extract=extract, generate=generate)
