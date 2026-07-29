@@ -39,6 +39,11 @@ SPARSE_K = 20
 RRF_K = 60
 FINAL_K = 5
 CACHE_SIZE = 128
+# The relevance gate (ticket #52): after RRF + filters, the top ``RERANK_POOL``
+# most-relevant survivors form the eligible pool. That pool is then re-ranked by
+# vote_count and capped to ``FINAL_K``. Small enough that a weakly-relevant film
+# never enters, big enough that vote_count has room to reorder.
+RERANK_POOL = 20
 
 
 def rrf_fuse(rankings: Iterable[list[int]], k: int = RRF_K) -> dict[int, float]:
@@ -157,6 +162,7 @@ class HybridRetriever:
         sparse_k: int = SPARSE_K,
         rrf_k: int = RRF_K,
         final_k: int = FINAL_K,
+        rerank_pool: int = RERANK_POOL,
         cache_size: int = CACHE_SIZE,
         embedding_cache: EmbeddingCache | None = None,
     ) -> None:
@@ -170,6 +176,7 @@ class HybridRetriever:
         self.sparse_k = sparse_k
         self.rrf_k = rrf_k
         self.final_k = final_k
+        self.rerank_pool = rerank_pool
         self.cache_size = cache_size
         self.embedding_cache = embedding_cache
 
@@ -280,11 +287,27 @@ class HybridRetriever:
                 continue
             survivors.append((tmdb_id, rrf_score))
 
-        # Deterministic ordering: highest RRF first, ties broken by tmdb_id.
+        # Stage 1 - relevance gate (ticket #52): order survivors by RRF (highest
+        # relevance first, ties by tmdb_id) and keep the top RERANK_POOL as the
+        # eligible pool. A weakly-relevant film never enters this pool.
         survivors.sort(key=lambda pair: (-pair[1], pair[0]))
+        pool = survivors[: self.rerank_pool]
+
+        # Stage 2 - within the eligible pool, vote_count is the primary ranker
+        # (mainstream titles lead; low-vote featurettes/documentaries sink).
+        # Ties keep the RRF order (the pool position), then tmdb_id, so the sort
+        # stays deterministic. Cap to FINAL_K; if fewer are eligible, return all.
+        ranked = sorted(
+            enumerate(pool),
+            key=lambda item: (
+                -(self.movies_by_id[item[1][0]].vote_count or 0),
+                item[0],
+                item[1][0],
+            ),
+        )
 
         out: list[ScoredMovie] = []
-        for rank, (tmdb_id, rrf_score) in enumerate(survivors[: self.final_k], start=1):
+        for rank, (_, (tmdb_id, rrf_score)) in enumerate(ranked[: self.final_k], start=1):
             movie = self.movies_by_id[tmdb_id]
             out.append(
                 ScoredMovie(
