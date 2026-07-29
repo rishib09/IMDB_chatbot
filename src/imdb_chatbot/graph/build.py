@@ -195,23 +195,32 @@ def _make_extract(models: GraphModels, collector: TraceCollector):
 
 
 def _session_merged_parsed(state: TurnState) -> ParsedQuery:
-    """Fold the session's standing exclusions (ticket #21) into this turn's parse.
+    """Fold session exclusions (#21) and standing constraints (#54) into the parse.
 
-    Exclusions set in an earlier turn are carried on ``TurnState`` and unioned
-    into ``parsed`` here so they still constrain retrieval on later turns.
+    The current turn's parse wins where it specifies a field; unspecified fields
+    inherit the standing constraints carried from earlier turns. Exclusions
+    (session-level and standing) are always unioned in.
     """
     parsed = state.parsed or ParsedQuery()
-    if not (state.session_exclude_actors or state.session_exclude_genres):
-        return parsed
-    return parsed.model_copy(
-        update={
-            "exclude_actors": sorted(
-                {*parsed.exclude_actors, *state.session_exclude_actors}
-            ),
-            "exclude_genres": sorted(
-                {*parsed.exclude_genres, *state.session_exclude_genres}
-            ),
-        }
+    standing = (
+        ParsedQuery.model_validate(state.session_standing)
+        if state.session_standing
+        else ParsedQuery()
+    )
+    return ParsedQuery(
+        genres=parsed.genres or standing.genres,
+        similar_to=parsed.similar_to or standing.similar_to,
+        director=parsed.director or standing.director,
+        actor=parsed.actor or standing.actor,
+        # Exclusions come from THIS turn plus the session set (which minimal
+        # precedence may have suspended) - never from standing, so a re-request of
+        # a previously excluded genre is honoured (ticket #21/#22).
+        exclude_actors=sorted({*parsed.exclude_actors, *state.session_exclude_actors}),
+        exclude_genres=sorted({*parsed.exclude_genres, *state.session_exclude_genres}),
+        min_year=parsed.min_year if parsed.min_year is not None else standing.min_year,
+        max_year=parsed.max_year if parsed.max_year is not None else standing.max_year,
+        min_rating=parsed.min_rating if parsed.min_rating is not None else standing.min_rating,
+        region=parsed.region or standing.region,
     )
 
 

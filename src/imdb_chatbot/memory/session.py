@@ -21,7 +21,7 @@ from collections.abc import Iterable
 from pydantic import BaseModel, Field
 
 from ..graph import GraphModels, RetrieverFn, TurnResult, UsageMeter, run_turn
-from ..schemas import TurnState
+from ..schemas import ParsedQuery, TurnState
 from ..store import TraceStore
 
 # Last N turns kept verbatim in the short-term window (PRD section 6).
@@ -59,6 +59,9 @@ class ConversationState(BaseModel):
     shown_movies: set[int] = Field(default_factory=set)
     preferences: dict = {}
     feedback: list = []
+    # Standing search constraints carried across turns (ticket #54): a refinement
+    # accumulates onto these; a replaced (new) search resets them.
+    standing: ParsedQuery = Field(default_factory=ParsedQuery)
     # Full turn log; only the last ``window_size`` are exposed verbatim.
     turns: list[Turn] = []
     summary: str = ""  # running summary of turns that fell out of the window
@@ -99,6 +102,33 @@ class ConversationState(BaseModel):
         """Record movie ids as already shown so they are never recommended twice."""
         for tmdb_id in tmdb_ids:
             self.shown_movies.add(int(tmdb_id))
+
+    # -- standing constraints (ticket #54) ------------------------------------
+
+    def reset_standing(self) -> None:
+        """Drop the accumulated constraints (used on a brand-new / replaced search)."""
+        self.standing = ParsedQuery()
+
+    def merge_standing(self, parsed: ParsedQuery) -> None:
+        """Fold a turn's POSITIVE constraints onto the standing set (current wins).
+
+        Fields the current turn specified override the standing value; unspecified
+        ones inherit. Exclusions are deliberately NOT accumulated here - they are
+        owned by the ``exclude_*`` / ``session_exclude_*`` mechanism together with
+        minimal precedence (ticket #21/#22), which lets a later turn re-request a
+        previously excluded genre. Accumulating them here would defeat that.
+        """
+        s = self.standing
+        self.standing = ParsedQuery(
+            genres=parsed.genres or s.genres,
+            similar_to=parsed.similar_to or s.similar_to,
+            director=parsed.director or s.director,
+            actor=parsed.actor or s.actor,
+            min_year=parsed.min_year if parsed.min_year is not None else s.min_year,
+            max_year=parsed.max_year if parsed.max_year is not None else s.max_year,
+            min_rating=parsed.min_rating if parsed.min_rating is not None else s.min_rating,
+            region=parsed.region or s.region,
+        )
 
     def record_turn(self, turn: Turn) -> None:
         """Append a completed turn, summarizing anything pushed out of the window."""
@@ -146,6 +176,7 @@ def build_turn_state(
         shown_movies=sorted(conversation.shown_movies),
         session_exclude_actors=list(conversation.exclude_actors),
         session_exclude_genres=list(conversation.exclude_genres),
+        session_standing=conversation.standing.model_dump(),
     )
 
 
@@ -164,6 +195,8 @@ def update_state_from_result(conversation: ConversationState, result: TurnResult
             final.parsed.exclude_actors,
             final.parsed.exclude_genres,
         )
+        # Accumulate this turn's constraints so the next refinement inherits them.
+        conversation.merge_standing(final.parsed)
 
     recommended_titles: list[str] = []
     shown_ids: list[int] = []

@@ -100,6 +100,10 @@ class TurnState(BaseModel):
     shown_movies: list[int] = []
     session_exclude_actors: list[str] = []
     session_exclude_genres: list[str] = []
+    # Standing constraints carried from earlier turns (ticket #54): a serialized
+    # ParsedQuery whose set fields are merged UNDER this turn's parse (the current
+    # turn overrides where it specifies). Empty on a fresh / replaced search.
+    session_standing: dict = {}
     parsed: ParsedQuery | None = None
     retrieved: list[ScoredMovie] = []
     candidates: list[ScoredMovie] = []

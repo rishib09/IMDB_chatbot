@@ -35,6 +35,7 @@ from ..persona import (
     classify_intent,
     persona_reply,
 )
+from ..router import FollowupClassifier, FollowupKind, clarify_question, route_followup
 from ..schemas import ParsedQuery, RecommendationSet
 
 # A factory that builds the turn's GraphModels bound to a usage meter.
@@ -93,6 +94,9 @@ class LiveResources:
     # fallback (offline). Kept separate from the graph so a "how are you" costs one
     # small call, not a full retrieval turn.
     chat_fn: ChatFn | None = None
+    # Classifies a follow-up turn (refine / replace / clarify) when prior results
+    # exist (ticket #54). None -> no routing (every search is treated as fresh).
+    followup_fn: FollowupClassifier | None = None
 
 
 def load_live_resources(
@@ -170,6 +174,28 @@ def load_live_resources(
             )
         return str(getattr(resp, "content", resp)).strip()
 
+    def followup_fn(query: str, last_titles: list[str]) -> str:
+        titles = ", ".join(last_titles) or "(none)"
+        resp = chat_model.invoke(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "You route a follow-up message in a movie chat. Reply with "
+                        "EXACTLY one word: 'refine' (the user wants to adjust or "
+                        "narrow the movies just shown), 'replace' (a brand-new, "
+                        "unrelated movie search), or 'clarify' (they rejected the "
+                        "results but gave no new criteria)."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"Movies just shown: {titles}\nUser's message: {query}",
+                },
+            ]
+        )
+        return str(getattr(resp, "content", resp))
+
     return LiveResources(
         retriever=retriever,
         models_factory=models_factory,
@@ -181,6 +207,7 @@ def load_live_resources(
         },
         store=store,
         chat_fn=chat_fn,
+        followup_fn=followup_fn,
     )
 
 
@@ -210,6 +237,14 @@ def _enrich_posters(
         if movie is not None and getattr(movie, "poster_url", None):
             pick.poster_url = movie.poster_url
     return rec
+
+
+def _last_recommended(conversation: object) -> list[str]:
+    """The titles shown on the most recent turn that produced picks (or [])."""
+    for turn in reversed(getattr(conversation, "turns", [])):
+        if turn.recommended:
+            return list(turn.recommended)
+    return []
 
 
 def build_live_chat_handler(
@@ -257,6 +292,25 @@ def build_live_chat_handler(
                 telemetry=telemetry,
                 conversational=True,
             )
+
+        # Follow-up routing (ticket #54): if results are already on screen, decide
+        # whether this turn refines them, replaces them, or is a vague rejection.
+        last_titles = _last_recommended(conversation)
+        if last_titles and resources.followup_fn is not None:
+            kind = route_followup(query, last_titles, resources.followup_fn)
+            if kind is FollowupKind.CLARIFY:
+                return ChatReply(
+                    rec=RecommendationSet(picks=[], prose=clarify_question()),
+                    telemetry=None,
+                    conversational=True,
+                )
+            if kind is FollowupKind.REPLACE:
+                # A brand-new search: forget accumulated constraints and let
+                # previously-shown movies be eligible again.
+                conversation.reset_standing()
+                conversation.shown_movies.clear()
+            # REFINE keeps the standing constraints (they accumulate) and the
+            # shown-movies set (so a narrowed search surfaces fresh titles).
 
         meter = UsageMeter()
         models = resources.models_factory(meter)
