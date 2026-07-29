@@ -34,6 +34,7 @@ class Intent(str, Enum):
     GREETING = "greeting"  # small talk: hi / hello / thanks / bye
     META = "meta"  # who/what are you, purpose, capabilities, help
     CHITCHAT = "chitchat"  # conversational (how are you, tell me a joke) -> LLM reply
+    MOVIE_QUESTION = "movie_question"  # factual question about a film -> answer from corpus
     SEARCH = "search"  # a genuine movie request -> run the graph
 
 
@@ -138,6 +139,22 @@ _CHITCHAT_PHRASES = (
 _PUNCT_RE = re.compile(r"[^a-z0-9\s]")
 _WS_RE = re.compile(r"\s+")
 
+# Factual questions ABOUT a specific film (cast, plot, director, "heard of X").
+# Deliberately specific so recommendation requests ("what's a good thriller")
+# are NOT caught. Matched on the normalized (punctuation-stripped) message.
+_MOVIE_QUESTION_RES = [
+    re.compile(r"\bwho (is|are|was) (the )?(cast|actors?|stars?|director|writer|producer)\b"),
+    re.compile(r"\bwho (directed|wrote|produced|stars? in|acted in|plays|played)\b"),
+    re.compile(
+        r"\bwhat (is|s|are) (the )?(plot|cast|story|synopsis|runtime|rating|genre|release)\b"
+    ),
+    re.compile(r"\bwhat (is|s) .+ about\b"),
+    re.compile(r"\bwhen (was|did) .+ (released|come out|made)\b"),
+    re.compile(r"\b(have|did) you (ever )?(hear|heard|see|seen) (of|about)\b"),
+    re.compile(r"\bdo you know (the movie|the film|about the movie|about the film)\b"),
+    re.compile(r"\btell me about the (movie|film)\b"),
+]
+
 
 def _normalize(text: str) -> str:
     """Lowercase, strip punctuation, collapse whitespace."""
@@ -166,6 +183,9 @@ def classify_intent(query: str) -> Intent:
 
     if any(phrase in normalized for phrase in _CHITCHAT_PHRASES):
         return Intent.CHITCHAT
+
+    if any(pattern.search(normalized) for pattern in _MOVIE_QUESTION_RES):
+        return Intent.MOVIE_QUESTION
 
     return Intent.SEARCH
 

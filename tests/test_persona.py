@@ -12,6 +12,7 @@ import pytest
 from imdb_chatbot.dashboard.live import LiveResources, build_live_chat_handler
 from imdb_chatbot.graph.models import GraphModels
 from imdb_chatbot.graph.usage import UsageMeter
+from imdb_chatbot.movie_info import build_title_lookup
 from imdb_chatbot.persona import (
     Intent,
     chat_system_prompt,
@@ -22,6 +23,7 @@ from imdb_chatbot.persona import (
 )
 from imdb_chatbot.schemas import (
     MovieRecommendation,
+    MovieRecord,
     ParsedQuery,
     RecommendationSet,
     ScoredMovie,
@@ -64,6 +66,33 @@ def test_meta_questions_classify_as_meta(message: str) -> None:
 )
 def test_conversational_messages_classify_as_chitchat(message: str) -> None:
     assert classify_intent(message) is Intent.CHITCHAT
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "who is the cast of Parasite?",
+        "what is Inception about",
+        "who directed The Dark Knight",
+        "have you heard of movie obsession?",
+        "tell me about the movie Oldboy",
+    ],
+)
+def test_movie_questions_classify_as_movie_question(message: str) -> None:
+    assert classify_intent(message) is Intent.MOVIE_QUESTION
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "recommend a good thriller",
+        "what's a good horror movie",
+        "a gritty korean revenge thriller",
+        "movies with tom hanks",
+    ],
+)
+def test_recommendation_requests_are_not_movie_questions(message: str) -> None:
+    assert classify_intent(message) is not Intent.MOVIE_QUESTION
 
 
 @pytest.mark.parametrize(
@@ -155,7 +184,9 @@ class _FakeStore:
         return type("M", (), {"poster_url": url})()
 
 
-def _resources(chat_fn=None, store=None, followup_fn=None) -> LiveResources:
+def _resources(
+    chat_fn=None, store=None, followup_fn=None, movie_lookup=None, title_extractor=None
+) -> LiveResources:
     return LiveResources(
         retriever=_fake_retriever,
         models_factory=_fake_models_factory,
@@ -167,6 +198,8 @@ def _resources(chat_fn=None, store=None, followup_fn=None) -> LiveResources:
         store=store,
         chat_fn=chat_fn,
         followup_fn=followup_fn,
+        movie_lookup=movie_lookup,
+        title_extractor=title_extractor,
     )
 
 
@@ -272,3 +305,27 @@ def test_followup_refine_keeps_shown_so_they_do_not_repeat() -> None:
     reply = handler("make it darker")  # refine -> Parasite excluded (already shown)
 
     assert reply.rec.picks == []
+
+
+def test_handler_answers_movie_question_from_corpus() -> None:
+    lookup = build_title_lookup(
+        [
+            MovieRecord(
+                tmdb_id=1,
+                title="Parasite",
+                year=2019,
+                director="Bong Joon Ho",
+                cast=["Song Kang-ho"],
+                plot="A poor family schemes.",
+            )
+        ]
+    )
+    handler = build_live_chat_handler(
+        _resources(movie_lookup=lookup, title_extractor=lambda q: "Parasite")
+    )
+
+    reply = handler("who is the cast of parasite?")
+
+    assert reply.conversational is True
+    assert reply.rec.picks == []
+    assert "Song Kang-ho" in reply.rec.prose
