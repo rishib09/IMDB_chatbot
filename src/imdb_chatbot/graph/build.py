@@ -93,6 +93,53 @@ def regex_extract(query: str) -> ParsedQuery:
     return ParsedQuery(genres=genres, min_year=min_year, max_year=max_year)
 
 
+# -- region default (ticket #53) -----------------------------------------------
+
+_DEFAULT_REGION = "US"
+_ANY_REGION_RE = re.compile(
+    r"\b(anywhere|any region|any country|any language|international|worldwide|foreign)\b"
+)
+
+
+_ACTOR_CUE_RE = re.compile(r"\b(starring|featuring|stars|acted by|with)\b")
+_DIRECTOR_CUE_RE = re.compile(r"\b(directed by|director)\b")
+
+
+def correct_person_role(parsed: ParsedQuery, query: str) -> ParsedQuery:
+    """Fix director/actor mix-ups from the extractor using the query wording.
+
+    The small extractor model sometimes files a star under 'director' (or a
+    director under 'actor'). When the query carries an unambiguous role cue -
+    "starring"/"featuring"/"with" for an actor, "directed by"/"director" for a
+    director - and the name landed in the wrong field, move it. Only fires when a
+    person was actually extracted, so plain phrases like "a thriller with a
+    twist" (no person) are untouched.
+    """
+    lowered = query.lower()
+    if _ACTOR_CUE_RE.search(lowered) and parsed.director and not parsed.actor:
+        return parsed.model_copy(update={"actor": parsed.director, "director": None})
+    if _DIRECTOR_CUE_RE.search(lowered) and parsed.actor and not parsed.director:
+        return parsed.model_copy(update={"director": parsed.actor, "actor": None})
+    return parsed
+
+
+def apply_region_default(parsed: ParsedQuery, query: str) -> ParsedQuery:
+    """Default the region to US for generic queries (ticket #53).
+
+    Applies only when no region was extracted, no person was named (a person
+    query should span all their films regardless of country), and the user did
+    not explicitly ask for any/other region.
+    """
+    if (
+        parsed.region is None
+        and not parsed.director
+        and not parsed.actor
+        and not _ANY_REGION_RE.search(query.lower())
+    ):
+        return parsed.model_copy(update={"region": _DEFAULT_REGION})
+    return parsed
+
+
 # -- nodes ---------------------------------------------------------------------
 
 
@@ -129,6 +176,7 @@ def _make_extract(models: GraphModels, collector: TraceCollector):
             parsed = models.extract(query)
             if not isinstance(parsed, ParsedQuery):
                 parsed = ParsedQuery.model_validate(parsed)
+            parsed = apply_region_default(correct_person_role(parsed, query), query)
             return {"parsed": parsed, "extract_failed": False}
         except Exception:  # noqa: BLE001 - drives the JSON-retry edge
             retries = state.extract_retries + 1
@@ -136,7 +184,7 @@ def _make_extract(models: GraphModels, collector: TraceCollector):
                 # Exhausted LLM attempts: fall back to regex extraction and
                 # continue (extract_failed cleared so the edge routes to retrieve).
                 return {
-                    "parsed": regex_extract(query),
+                    "parsed": apply_region_default(regex_extract(query), query),
                     "extract_failed": False,
                     "extract_retries": retries,
                     "degradation": [*state.degradation, "extract_regex_fallback"],
@@ -264,7 +312,19 @@ def _make_validate(collector: TraceCollector):
 def _make_fallback(collector: TraceCollector):
     @traced("fallback", collector)
     def fallback(state: TurnState) -> dict:
-        response = RecommendationSet(picks=[], prose=_FALLBACK_PROSE)
+        # A person query that found nothing gets a specific, honest message
+        # rather than the generic relax-a-constraint prose (ticket #50).
+        person = None
+        if state.parsed:
+            person = state.parsed.director or state.parsed.actor
+        if person:
+            prose = (
+                f"I could not find films by {person} in my catalog. "
+                "Want to try another name, or a different kind of movie?"
+            )
+        else:
+            prose = _FALLBACK_PROSE
+        response = RecommendationSet(picks=[], prose=prose)
         return {"response": response, "degradation": [*state.degradation, "fallback"]}
 
     return fallback
