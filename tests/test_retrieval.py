@@ -39,9 +39,14 @@ requires_faiss = pytest.mark.skipif(not HAS_FAISS, reason="faiss-cpu not install
 # exclusion tests are meaningful (the excluded thing really shows up otherwise).
 REPEAT_STAR = "Repeat Star"
 
+# vote_count per tmdb_id, applied only when a test asks for a "voted" corpus.
+# Chosen so the top-5 order (8, 2, 12, 7, 4) differs from any RRF order, making
+# the vote_count re-rank (#52) observable.
+_VOTES = {1: 500, 2: 900, 3: 100, 4: 700, 5: 300, 6: 50, 7: 800, 8: 950, 9: 200, 10: 600, 11: 400, 12: 850}
 
-def _corpus() -> list[MovieRecord]:
-    return [
+
+def _corpus(with_votes: bool = False) -> list[MovieRecord]:
+    movies = [
         MovieRecord(
             tmdb_id=1,
             title="Midnight Detective",
@@ -175,6 +180,26 @@ def _corpus() -> list[MovieRecord]:
             rating_raw=6.9,
         ),
     ]
+    if with_votes:
+        for movie in movies:
+            movie.vote_count = _VOTES[movie.tmdb_id]
+    return movies
+
+
+def _voted_retriever(tmp_path: Path, *, rerank_pool: int = 20) -> HybridRetriever:
+    """A retriever over the corpus WITH vote_counts, to exercise the #52 re-rank."""
+    store = TraceStore(tmp_path / "voted.sqlite")
+    for movie in _corpus(with_votes=True):
+        store.write_movie(movie)
+    embedder = StubEmbedder(dim=16)
+    result = build_index(
+        store, embedder, dataset_version="t52", out_root=tmp_path / "vindex",
+        cache=None, flip_pointer=False,
+    )
+    loaded = load_index(result.out_dir)
+    r = HybridRetriever.from_store(loaded, embedder, store, rerank_pool=rerank_pool)
+    store.close()
+    return r
 
 
 @pytest.fixture()
@@ -396,6 +421,38 @@ def test_shown_movies_exclusion(retriever: HybridRetriever) -> None:
     out = retriever.retrieve(QUERY, ParsedQuery(), shown_movies=shown)
     returned = {s.tmdb_id for s in out}
     assert not (returned & shown), "shown movies must not repeat"
+
+
+# -- vote_count re-rank + top-5 cap (ticket #52) -----------------------------
+
+
+@requires_faiss
+def test_reranks_relevant_pool_by_vote_count(tmp_path: Path) -> None:
+    # No filter -> all 12 are the eligible pool; top 5 by vote_count (ties by
+    # relevance): 8 (950), 2 (900), 12 (850), 7 (800), 4 (700).
+    out = _voted_retriever(tmp_path).retrieve(QUERY, ParsedQuery())
+    assert [s.tmdb_id for s in out] == [8, 2, 12, 7, 4]
+
+
+@requires_faiss
+def test_caps_at_five(tmp_path: Path) -> None:
+    out = _voted_retriever(tmp_path).retrieve(QUERY, ParsedQuery())
+    assert len(out) == 5
+
+
+@requires_faiss
+def test_fewer_than_five_returns_all(tmp_path: Path) -> None:
+    # Only 3 KR films exist -> all 3 returned, vote_count-ordered, not padded.
+    out = _voted_retriever(tmp_path).retrieve(QUERY, ParsedQuery(region="KR"))
+    assert [s.tmdb_id for s in out] == [8, 2, 12]
+
+
+@requires_faiss
+def test_rerank_pool_gates_eligibility_before_vote_count(tmp_path: Path) -> None:
+    # A tiny relevance pool caps eligibility BEFORE vote_count is consulted, so
+    # only 2 come back even though all 12 pass the filters - relevance gates first.
+    out = _voted_retriever(tmp_path, rerank_pool=2).retrieve(QUERY, ParsedQuery())
+    assert len(out) == 2
 
 
 # -- cache --------------------------------------------------------------------
