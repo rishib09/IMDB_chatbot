@@ -60,8 +60,15 @@ def _rewrite_prompt(raw_query: str, history: Sequence[Any]) -> str:
 def _extract_prompt(query: str) -> str:
     return (
         "Extract structured search filters from the query as JSON matching the "
-        "ParsedQuery schema (genres, similar_to, exclude_actors, exclude_genres, "
-        "min_year, max_year, min_rating, region). Omit unknown fields.\n\n"
+        "ParsedQuery schema (genres, similar_to, director, actor, exclude_actors, "
+        "exclude_genres, min_year, max_year, min_rating, region). Decide a named "
+        "person's ROLE from the wording: 'directed by', 'by', 'from director', or "
+        "a bare name ('Tarantino movies') -> set 'director'; 'with', 'starring', "
+        "'featuring', 'stars' -> set 'actor'. Examples: 'movies by Christopher "
+        "Nolan' -> director='Christopher Nolan'; 'movies with Tom Hanks' -> "
+        "actor='Tom Hanks'; 'films starring Meryl Streep' -> actor='Meryl Streep'. "
+        "Never put an actor in 'director' or a director in 'actor'. Omit unknown "
+        "fields.\n\n"
         f"Query: {query}"
     )
 

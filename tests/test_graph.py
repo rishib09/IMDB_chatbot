@@ -13,7 +13,11 @@ from pathlib import Path
 import pytest
 
 from imdb_chatbot.graph import GraphModels, build_graph, run_turn
-from imdb_chatbot.graph.build import regex_extract
+from imdb_chatbot.graph.build import (
+    apply_region_default,
+    correct_person_role,
+    regex_extract,
+)
 from imdb_chatbot.schemas import (
     MovieRecommendation,
     ParsedQuery,
@@ -159,7 +163,57 @@ def test_extract_retry_then_success() -> None:
     ]
     assert result.state.extract_retries == 1
     assert calls["n"] == 2
-    assert result.state.parsed == ParsedQuery(genres=["Action"])
+    # region defaults to US (ticket #53): no region/person named in the query.
+    assert result.state.parsed == ParsedQuery(genres=["Action"], region="US")
+
+
+# -- default region = US (ticket #53) ----------------------------------------
+
+
+def test_region_defaults_to_us_for_generic_query() -> None:
+    out = apply_region_default(ParsedQuery(genres=["Thriller"]), "a good thriller")
+    assert out.region == "US"
+
+
+def test_explicit_region_is_not_overridden() -> None:
+    out = apply_region_default(ParsedQuery(region="KR"), "a korean thriller")
+    assert out.region == "KR"
+
+
+def test_no_us_default_when_person_named() -> None:
+    # A person query should span all their films regardless of country.
+    assert apply_region_default(ParsedQuery(director="Nolan"), "nolan movies").region is None
+    assert apply_region_default(ParsedQuery(actor="Tom Hanks"), "tom hanks films").region is None
+
+
+def test_any_region_phrase_clears_the_default() -> None:
+    out = apply_region_default(ParsedQuery(), "a great thriller from anywhere")
+    assert out.region is None
+
+
+# -- director/actor role correction (ticket #50) -----------------------------
+
+
+def test_actor_cue_moves_name_from_director_to_actor() -> None:
+    # Extractor wrongly filed a star under director; "starring" fixes it.
+    out = correct_person_role(ParsedQuery(director="Meryl Streep"), "films starring meryl streep")
+    assert out.actor == "Meryl Streep" and out.director is None
+
+
+def test_director_cue_moves_name_from_actor_to_director() -> None:
+    out = correct_person_role(ParsedQuery(actor="Nolan"), "movies directed by nolan")
+    assert out.director == "Nolan" and out.actor is None
+
+
+def test_no_person_no_change() -> None:
+    # "with a twist" has no extracted person -> untouched.
+    out = correct_person_role(ParsedQuery(genres=["Thriller"]), "a thriller with a twist")
+    assert out.director is None and out.actor is None
+
+
+def test_correct_role_leaves_correct_tagging_alone() -> None:
+    out = correct_person_role(ParsedQuery(actor="Tom Hanks"), "movies with tom hanks")
+    assert out.actor == "Tom Hanks" and out.director is None
 
 
 def test_extract_regex_fallback_after_two_failures() -> None:

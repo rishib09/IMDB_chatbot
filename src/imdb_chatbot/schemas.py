@@ -47,6 +47,8 @@ class MovieRecord(BaseModel):
 class ParsedQuery(BaseModel):
     genres: list[str] = []
     similar_to: str | None = None
+    director: str | None = None  # "movies by/directed by X" -> that director's films
+    actor: str | None = None  # "movies with/starring X" -> films with X in the cast
     exclude_actors: list[str] = []
     exclude_genres: list[str] = []
     min_year: int | None = None

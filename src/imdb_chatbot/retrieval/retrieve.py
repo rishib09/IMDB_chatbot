@@ -25,6 +25,7 @@ naturally.
 
 from __future__ import annotations
 
+import re
 from collections import OrderedDict
 from collections.abc import Iterable
 
@@ -44,6 +45,19 @@ CACHE_SIZE = 128
 # vote_count and capped to ``FINAL_K``. Small enough that a weakly-relevant film
 # never enters, big enough that vote_count has room to reorder.
 RERANK_POOL = 20
+
+
+_NAME_PUNCT_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _normalize_name(name: str | None) -> str:
+    """Lowercase, fold punctuation to spaces, collapse whitespace.
+
+    Folding punctuation makes name matching robust to hyphen/space/period
+    variants: "Bong Joon-ho" and "Bong Joon Ho" both normalize to "bong joon ho",
+    and "J.J. Abrams" to "j j abrams".
+    """
+    return " ".join(_NAME_PUNCT_RE.sub(" ", (name or "").casefold()).split())
 
 
 def rrf_fuse(rankings: Iterable[list[int]], k: int = RRF_K) -> dict[int, float]:
@@ -75,6 +89,8 @@ def _freeze_filters(parsed: ParsedQuery, shown_movies: frozenset[int]) -> tuple:
     return (
         tuple(sorted(parsed.genres)),
         parsed.similar_to,
+        parsed.director,
+        parsed.actor,
         tuple(sorted(parsed.exclude_actors)),
         tuple(sorted(parsed.exclude_genres)),
         parsed.min_year,
@@ -116,6 +132,17 @@ def _passes_filters(
 
     if parsed.region is not None and parsed.region not in movie.regions:
         return False
+
+    # Person constraints (ticket #50): keep only that director's / actor's films.
+    # Tolerant substring match so "Nolan" matches "Christopher Nolan".
+    if parsed.director:
+        wanted = _normalize_name(parsed.director)
+        if wanted not in _normalize_name(movie.director):
+            return False
+    if parsed.actor:
+        wanted = _normalize_name(parsed.actor)
+        if not any(wanted in _normalize_name(member) for member in movie.cast):
+            return False
 
     # Exclusions (load-bearing). Any overlap -> drop.
     if parsed.exclude_genres:
@@ -184,6 +211,21 @@ class HybridRetriever:
         self._cache: OrderedDict[tuple, list[ScoredMovie]] = OrderedDict()
         # Number of genuine pipeline runs (cache misses). Test hook.
         self.search_calls = 0
+
+        # Person indices (ticket #50): a "movies by <director>" / "with <actor>"
+        # query pulls that person's credited films directly, since semantic search
+        # surfaces documentaries ABOUT the person instead of their actual films.
+        self._director_rows: list[tuple[str, int]] = [
+            (_normalize_name(movie.director), tmdb_id)
+            for tmdb_id, movie in self.movies_by_id.items()
+            if movie.director
+        ]
+        self._actor_rows: list[tuple[str, int]] = [
+            (_normalize_name(member), tmdb_id)
+            for tmdb_id, movie in self.movies_by_id.items()
+            for member in movie.cast
+            if member
+        ]
 
     @classmethod
     def from_store(
@@ -264,6 +306,13 @@ class HybridRetriever:
 
         return result
 
+    def _person_ids(self, rows: list[tuple[str, int]], name: str) -> set[int]:
+        """tmdb_ids whose person field matches ``name`` (tolerant substring)."""
+        wanted = _normalize_name(name)
+        if not wanted:
+            return set()
+        return {tmdb_id for have, tmdb_id in rows if wanted in have}
+
     def _run(
         self,
         rewritten_query: str,
@@ -278,14 +327,22 @@ class HybridRetriever:
 
         fused = rrf_fuse([dense_ranking, sparse_ranking], k=self.rrf_k)
 
+        # Candidate pool: the semantic fusion, plus - for a person query - all of
+        # that director's / actor's films (which semantic search alone would miss).
+        candidate_ids = set(fused)
+        if parsed.director:
+            candidate_ids.update(self._person_ids(self._director_rows, parsed.director))
+        if parsed.actor:
+            candidate_ids.update(self._person_ids(self._actor_rows, parsed.actor))
+
         survivors: list[tuple[int, float]] = []
-        for tmdb_id, rrf_score in fused.items():
+        for tmdb_id in candidate_ids:
             movie = self.movies_by_id.get(tmdb_id)
             if movie is None:
                 continue
             if not _passes_filters(movie, parsed, shown):
                 continue
-            survivors.append((tmdb_id, rrf_score))
+            survivors.append((tmdb_id, fused.get(tmdb_id, 0.0)))
 
         # Stage 1 - relevance gate (ticket #52): order survivors by RRF (highest
         # relevance first, ties by tmdb_id) and keep the top RERANK_POOL as the

@@ -24,6 +24,7 @@ from imdb_chatbot.index.embedder import StubEmbedder
 from imdb_chatbot.retrieval.retrieve import (
     HybridRetriever,
     _effective_rating,
+    _normalize_name,
     rrf_fuse,
 )
 from imdb_chatbot.schemas import MovieRecord, ParsedQuery, ScoredMovie
@@ -453,6 +454,53 @@ def test_rerank_pool_gates_eligibility_before_vote_count(tmp_path: Path) -> None
     # only 2 come back even though all 12 pass the filters - relevance gates first.
     out = _voted_retriever(tmp_path, rerank_pool=2).retrieve(QUERY, ParsedQuery())
     assert len(out) == 2
+
+
+# -- person-aware retrieval (ticket #50) -------------------------------------
+
+
+def test_normalize_name_folds_punctuation() -> None:
+    # Hyphen/space/period variants normalize the same, so "Bong Joon-ho" matches
+    # a corpus that stores "Bong Joon Ho".
+    assert _normalize_name("Bong Joon-ho") == _normalize_name("Bong Joon Ho") == "bong joon ho"
+    assert _normalize_name("J.J. Abrams") == "j j abrams"
+
+
+@requires_faiss
+def test_director_returns_only_that_directors_films(retriever: HybridRetriever) -> None:
+    # "Dir B" directs only Seoul Mystery (tmdb 2).
+    out = retriever.retrieve(QUERY, ParsedQuery(director="Dir B"))
+    assert [s.tmdb_id for s in out] == [2]
+
+
+@requires_faiss
+def test_director_match_is_case_insensitive_substring(retriever: HybridRetriever) -> None:
+    # "b" is contained in "dir b" (normalized) -> matches that director only.
+    out = retriever.retrieve(QUERY, ParsedQuery(director="b"))
+    assert [s.tmdb_id for s in out] == [2]
+
+
+@requires_faiss
+def test_actor_returns_only_films_with_that_actor(retriever: HybridRetriever) -> None:
+    # Song Lee is in the cast of tmdb 2, 8, 10.
+    out = retriever.retrieve(QUERY, ParsedQuery(actor="Song Lee"))
+    assert {s.tmdb_id for s in out} == {2, 8, 10}
+
+
+@requires_faiss
+def test_unknown_person_returns_empty(retriever: HybridRetriever) -> None:
+    assert retriever.retrieve(QUERY, ParsedQuery(director="Christopher Nolan")) == []
+    assert retriever.retrieve(QUERY, ParsedQuery(actor="Tom Hanks")) == []
+
+
+@requires_faiss
+def test_person_films_surface_even_when_query_is_unrelated(
+    retriever: HybridRetriever,
+) -> None:
+    # A query unrelated to the film still returns the director's movie, because
+    # the person index injects it into the candidate pool.
+    out = retriever.retrieve("sunny feel-good comedy wedding", ParsedQuery(director="Dir B"))
+    assert [s.tmdb_id for s in out] == [2]
 
 
 # -- cache --------------------------------------------------------------------
