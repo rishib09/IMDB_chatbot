@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..graph import GraphModels, RetrieverFn, UsageMeter, estimate_cost
+from ..movie_info import TitleExtractor, TitleLookup, answer_movie_question
 from ..persona import (
     Intent,
     chitchat_fallback,
@@ -97,6 +98,10 @@ class LiveResources:
     # Classifies a follow-up turn (refine / replace / clarify) when prior results
     # exist (ticket #54). None -> no routing (every search is treated as fresh).
     followup_fn: FollowupClassifier | None = None
+    # Answering factual movie questions (ticket #58): a corpus title lookup and an
+    # LLM that pulls the title out of the question. None -> a generic redirect.
+    movie_lookup: TitleLookup | None = None
+    title_extractor: TitleExtractor | None = None
 
 
 def load_live_resources(
@@ -174,6 +179,26 @@ def load_live_resources(
             )
         return str(getattr(resp, "content", resp)).strip()
 
+    from ..movie_info import build_title_lookup
+
+    movie_lookup = build_title_lookup(hybrid.movies_by_id.values())
+
+    def title_extractor(query: str) -> str:
+        resp = chat_model.invoke(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "Extract the movie title the user is asking about. Reply "
+                        "with ONLY the title, nothing else. If there is no title, "
+                        "reply with an empty line."
+                    ),
+                },
+                {"role": "user", "content": query},
+            ]
+        )
+        return str(getattr(resp, "content", resp)).strip().strip('"')
+
     def followup_fn(query: str, last_titles: list[str]) -> str:
         titles = ", ".join(last_titles) or "(none)"
         resp = chat_model.invoke(
@@ -208,6 +233,8 @@ def load_live_resources(
         store=store,
         chat_fn=chat_fn,
         followup_fn=followup_fn,
+        movie_lookup=movie_lookup,
+        title_extractor=title_extractor,
     )
 
 
@@ -269,6 +296,23 @@ def build_live_chat_handler(
         if intent in (Intent.GREETING, Intent.META):
             return ChatReply(
                 rec=persona_reply(intent),
+                telemetry=None,
+                conversational=True,
+            )
+
+        if intent is Intent.MOVIE_QUESTION:
+            # A factual question about a specific film: answer from the corpus.
+            if resources.movie_lookup is not None and resources.title_extractor is not None:
+                text = answer_movie_question(
+                    query, resources.movie_lookup, resources.title_extractor
+                )
+            else:
+                text = (
+                    "Tell me a movie title and I'll share what I know about it - "
+                    "or I can recommend something."
+                )
+            return ChatReply(
+                rec=RecommendationSet(picks=[], prose=text),
                 telemetry=None,
                 conversational=True,
             )
