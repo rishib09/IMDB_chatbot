@@ -155,7 +155,7 @@ class _FakeStore:
         return type("M", (), {"poster_url": url})()
 
 
-def _resources(chat_fn=None, store=None) -> LiveResources:
+def _resources(chat_fn=None, store=None, followup_fn=None) -> LiveResources:
     return LiveResources(
         retriever=_fake_retriever,
         models_factory=_fake_models_factory,
@@ -166,6 +166,7 @@ def _resources(chat_fn=None, store=None) -> LiveResources:
         versions={"index": "test", "model_config": "test", "prompt": "persona-v2"},
         store=store,
         chat_fn=chat_fn,
+        followup_fn=followup_fn,
     )
 
 
@@ -235,3 +236,39 @@ def test_handler_backfills_posters_from_store() -> None:
     assert [p.title for p in reply.rec.picks] == ["Parasite"]
     # poster_url is the authoritative corpus URL, not whatever the model emitted.
     assert str(reply.rec.picks[0].poster_url) == "https://img.example/parasite.jpg"
+
+
+# -- follow-up routing (ticket #54) ------------------------------------------
+
+
+def _followup(label):
+    return lambda query, titles: label
+
+
+def test_followup_clarify_asks_a_question_without_searching() -> None:
+    handler = build_live_chat_handler(_resources(followup_fn=_followup("clarify")))
+    handler("a korean thriller")  # turn 1 -> shows Parasite
+
+    reply = handler("i'm not sure")  # vague -> clarify
+
+    assert reply.conversational is True
+    assert reply.rec.picks == []
+    assert "region" in reply.rec.prose.lower()
+
+
+def test_followup_replace_lets_previously_shown_reappear() -> None:
+    handler = build_live_chat_handler(_resources(followup_fn=_followup("replace")))
+    handler("a korean thriller")  # turn 1 -> Parasite (now marked shown)
+
+    reply = handler("show me some comedies")  # replace -> shown reset
+
+    assert [p.title for p in reply.rec.picks] == ["Parasite"]
+
+
+def test_followup_refine_keeps_shown_so_they_do_not_repeat() -> None:
+    handler = build_live_chat_handler(_resources(followup_fn=_followup("refine")))
+    handler("a korean thriller")  # turn 1 -> Parasite (shown)
+
+    reply = handler("make it darker")  # refine -> Parasite excluded (already shown)
+
+    assert reply.rec.picks == []
