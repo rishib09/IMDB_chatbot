@@ -32,6 +32,7 @@ Two stores implement the ``MemoryStore`` protocol:
 from __future__ import annotations
 
 import time
+from collections import deque
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Literal, Protocol, runtime_checkable
@@ -153,11 +154,18 @@ class LocalJsonlStore:
         path = self._path(user_id)
         if not path.exists():
             return
-        lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
-        if len(lines) <= MAX_TRIPLES_PER_USER:
+        # Stream the file through a bounded window instead of loading a whole
+        # user's history to (usually) discover it is under the cap. One slot of
+        # headroom is what makes "over the cap" detectable without a count.
+        with path.open(encoding="utf-8") as fh:
+            tail = deque(
+                (ln.rstrip("\n") for ln in fh if ln.strip()),
+                maxlen=MAX_TRIPLES_PER_USER + 1,
+            )
+        if len(tail) <= MAX_TRIPLES_PER_USER:
             return
-        kept = lines[-MAX_TRIPLES_PER_USER:]
-        path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+        tail.popleft()
+        path.write_text("\n".join(tail) + "\n", encoding="utf-8")
 
 
 class HFDatasetStore:

@@ -25,6 +25,7 @@ naturally.
 
 from __future__ import annotations
 
+import heapq
 from collections import OrderedDict
 from collections.abc import Iterable
 
@@ -45,6 +46,12 @@ CACHE_SIZE = 128
 # vote_count and capped to ``FINAL_K``. Small enough that a weakly-relevant film
 # never enters, big enough that vote_count has room to reorder.
 RERANK_POOL = 20
+
+
+def _best_first(scored: tuple[int, float]) -> tuple[float, int]:
+    """Sort key for a ``(tmdb_id, score)`` pair: highest score, ties by tmdb_id."""
+    tmdb_id, score = scored
+    return (-score, tmdb_id)
 
 
 def rrf_fuse(rankings: Iterable[list[int]], k: int = RRF_K) -> dict[int, float]:
@@ -251,8 +258,7 @@ class HybridRetriever:
             for row, score in enumerate(raw)
             if row < len(row_to_id)
         ]
-        scored.sort(key=lambda pair: (-pair[1], pair[0]))
-        top = scored[: self.sparse_k]
+        top = heapq.nsmallest(self.sparse_k, scored, key=_best_first)
         ranking = [tmdb_id for tmdb_id, _ in top]
         scores = {tmdb_id: score for tmdb_id, score in top}
         return ranking, scores
@@ -334,8 +340,7 @@ class HybridRetriever:
         # Stage 1 - relevance gate (ticket #52): order survivors by RRF (highest
         # relevance first, ties by tmdb_id) and keep the top RERANK_POOL as the
         # eligible pool. A weakly-relevant film never enters this pool.
-        survivors.sort(key=lambda pair: (-pair[1], pair[0]))
-        pool = survivors[: self.rerank_pool]
+        pool = heapq.nsmallest(self.rerank_pool, survivors, key=_best_first)
 
         # Stage 2 - within the eligible pool, vote_count is the primary ranker
         # (mainstream titles lead; low-vote featurettes/documentaries sink).
