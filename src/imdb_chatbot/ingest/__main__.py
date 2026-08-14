@@ -12,7 +12,7 @@ import argparse
 import logging
 import sys
 
-from ..store import TraceStore
+from ..store import RawArchive, TraceStore
 from .tmdb import run_ingest
 
 # Named region groups expand to ISO 3166-1 country codes so you can pull a whole
@@ -57,16 +57,32 @@ def main(argv: list[str] | None = None) -> int:
         help="TMDB discover pages per country (20 results/page; default 500 = ~10k, "
         "the TMDB discover ceiling).",
     )
+    parser.add_argument(
+        "--raw-db",
+        default="data/raw_tmdb.sqlite",
+        help="Raw TMDB payload archive, a SEPARATE build-time file that never "
+        "ships (default: data/raw_tmdb.sqlite).",
+    )
+    parser.add_argument(
+        "--no-raw",
+        action="store_true",
+        help="Skip archiving raw payloads (the corpus record then has no source).",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
     regions = expand_regions(args.regions)
     store = TraceStore(args.db)
+    archive = None if args.no_raw else RawArchive(args.raw_db)
     try:
-        stats = run_ingest(store, regions=regions, max_pages=args.max_pages)
+        stats = run_ingest(
+            store, regions=regions, max_pages=args.max_pages, archive=archive
+        )
     finally:
         store.close()
+        if archive is not None:
+            archive.close()
 
     print(
         f"ingested={stats.ingested} skipped={stats.skipped} "

@@ -3,8 +3,8 @@
 This module has two strictly separated halves:
 
 1. PURE TRANSFORM (no I/O, no network) - ``is_complete``, ``map_tmdb_movie``,
-   ``transform_movie``. These turn a TMDB movie-details JSON dict (with
-   ``credits`` and ``release_dates`` appended) into a validated ``MovieRecord``,
+   ``transform_movie``. These turn a TMDB movie-details JSON dict (with the
+   ``APPEND_TO_RESPONSE`` namespaces appended) into a validated ``MovieRecord``,
    or classify it as skipped / rejected. They are the only thing the unit tests
    exercise, against embedded fixtures - never the live API.
 
@@ -25,6 +25,9 @@ Corpus rules:
   not quarantined).
 - Dedup + upsert by ``tmdb_id`` so re-runs are idempotent and a movie returned
   by two region pulls lands once (a co-production carrying e.g. ["US","IN"]).
+- Every successfully mapped record also archives its raw payload (``RawArchive``,
+  ticket #78), so ``MovieRecord`` is an explicitly derived projection and a
+  future schema question is a re-derivation, not a re-fetch.
 """
 
 from __future__ import annotations
@@ -44,12 +47,20 @@ from .certificates import CertificateMap, load_certificate_map
 if TYPE_CHECKING:
     import httpx
 
-    from ..store import TraceStore
+    from ..store import RawArchive, TraceStore
 
 logger = logging.getLogger(__name__)
 
 IMAGE_BASE = "https://image.tmdb.org/t/p/w500"
 API_BASE = "https://api.themoviedb.org/3"
+
+# Namespaces appended to every /movie/{id} call. ``keywords`` and
+# ``alternative_titles`` are NOT mapped into MovieRecord today - they ride along
+# for free on the same request and are archived raw, because the raw archive can
+# only ever protect us against under-*mapping*, never against under-*fetching*
+# (decision D0, #62). Stored per row as ``append_spec`` so a future widening
+# re-fetches only the rows written under an older spec.
+APPEND_TO_RESPONSE = "credits,release_dates,keywords,alternative_titles"
 
 
 # ---------------------------------------------------------------------------
@@ -315,10 +326,10 @@ class TMDBClient:
         return ids
 
     def fetch_details(self, tmdb_id: int) -> dict[str, Any]:
-        """Fetch full details with credits + release_dates appended."""
+        """Fetch full details with ``APPEND_TO_RESPONSE`` namespaces appended."""
         resp = self._client.get(
             f"/movie/{tmdb_id}",
-            params=self._params({"append_to_response": "credits,release_dates"}),
+            params=self._params({"append_to_response": APPEND_TO_RESPONSE}),
         )
         resp.raise_for_status()
         return resp.json()
@@ -333,17 +344,46 @@ class TMDBClient:
         self.close()
 
 
+def rederive_record(
+    archive: RawArchive,
+    tmdb_id: int,
+    *,
+    preferred_region: str | None = None,
+) -> MovieRecord | None:
+    """Re-derive a ``MovieRecord`` from the archived raw payload (None if absent).
+
+    The whole point of the archive: ``MovieRecord`` is a projection, and this is
+    the projection function replayed. It runs the *same* ``map_tmdb_movie`` the
+    live ingest runs, so archive -> record is exact by construction rather than
+    by a parallel implementation kept in sync.
+
+    ``preferred_region`` is a property of the *pull*, not of the payload (it only
+    breaks ties in certificate selection for co-productions), so a caller that
+    wants byte-identical re-derivation must pass the region the row was pulled
+    under - normally the record's first ``regions`` entry.
+    """
+    payload = archive.get(tmdb_id)
+    if payload is None:
+        return None
+    return map_tmdb_movie(payload, preferred_region=preferred_region)
+
+
 def run_ingest(
     store: TraceStore,
     *,
     regions: Iterable[str],
     max_pages: int = 1,
     client: TMDBClient | None = None,
+    archive: RawArchive | None = None,
 ) -> IngestStats:
     """Pull each region, transform, and persist - idempotent (upsert on tmdb_id).
 
     This is the networked orchestration. It reuses the pure ``transform_movie``
     for every row so the classification logic stays identically testable.
+
+    When ``archive`` is given, the raw payload behind every successfully mapped
+    record is stored alongside it, so the corpus never contains a record whose
+    source has been thrown away.
     """
     owns_client = client is None
     client = client or TMDBClient.from_env()
@@ -367,6 +407,8 @@ def run_ingest(
                 else:
                     assert outcome.record is not None
                     store.write_movie(outcome.record)
+                    if archive is not None:
+                        archive.put(tmdb_id, details, append_spec=APPEND_TO_RESPONSE)
                     stats.ingested += 1
     finally:
         if owns_client:
