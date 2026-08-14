@@ -17,6 +17,11 @@ calls, with stable tie-breaking by ``tmdb_id``. In particular the exclusion
 filters give an exclusion precision of 1.00 - a returned candidate NEVER contains
 an excluded actor or genre.
 
+Degradation: the dense side is optional and the sparse side is local. If embedding
+the query fails - the live risk once the embedder is a hosted API (ticket #76) -
+the turn runs sparse-only and still returns filtered, deterministic results. It
+never raises.
+
 An in-process LRU cache keyed by ``(hash(rewritten_query), index_version,
 hash(frozen_filters))`` short-circuits repeated identical calls. There is no TTL:
 the index version is part of the key, so a new index invalidates the cache
@@ -26,6 +31,7 @@ naturally.
 from __future__ import annotations
 
 import heapq
+import logging
 from collections import OrderedDict
 from collections.abc import Iterable
 
@@ -35,6 +41,8 @@ from ..index.embedder import Embedder
 from ..schemas import MovieRecord, ParsedQuery, ScoredMovie
 from ..store import TraceStore
 from ..text import normalize_text as _normalize_name
+
+logger = logging.getLogger(__name__)
 
 DENSE_K = 20
 SPARSE_K = 20
@@ -205,6 +213,9 @@ class HybridRetriever:
         self._cache: OrderedDict[tuple, list[ScoredMovie]] = OrderedDict()
         # Number of genuine pipeline runs (cache misses). Test hook.
         self.search_calls = 0
+        # Turns that ran sparse-only because the dense side failed (ticket #76).
+        # Non-zero means the answer was served degraded, not that it errored.
+        self.dense_failures = 0
 
         # Person indices (ticket #50): a "movies by <director>" / "with <actor>"
         # query pulls that person's credited films directly, since semantic search
@@ -235,10 +246,22 @@ class HybridRetriever:
     # -- ranking sides --------------------------------------------------------
 
     def _dense_ranking(self, query: str) -> tuple[list[int], dict[int, float]]:
-        """FAISS cosine search -> (ordered tmdb_ids, tmdb_id -> dense score)."""
-        hits = dense_search(
-            self.loaded, self.embedder, query, k=self.dense_k, cache=self.embedding_cache
-        )
+        """FAISS cosine search -> (ordered tmdb_ids, tmdb_id -> dense score).
+
+        A hosted embedder (ticket #76) makes this a network call, so it can fail
+        exactly when the network does. Dense retrieval is the OPTIONAL half of the
+        hybrid: BM25 is local and needs nothing. A failure here therefore degrades
+        the turn to sparse-only - it never propagates. That is what keeps L2
+        ("LLM-free deterministic retrieval") alive during an outage.
+        """
+        try:
+            hits = dense_search(
+                self.loaded, self.embedder, query, k=self.dense_k, cache=self.embedding_cache
+            )
+        except Exception as exc:  # noqa: BLE001 - ANY dense failure degrades, never raises
+            self.dense_failures += 1
+            logger.warning("dense retrieval failed, degrading to sparse-only: %s", exc)
+            return [], {}
         ranking = [tmdb_id for tmdb_id, _ in hits]
         scores = {tmdb_id: score for tmdb_id, score in hits}
         return ranking, scores

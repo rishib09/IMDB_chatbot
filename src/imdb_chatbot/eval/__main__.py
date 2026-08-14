@@ -17,7 +17,12 @@ from pathlib import Path
 
 from ..config import CONFIG_DIR
 from ..index.build import load_index
-from ..index.embedder import Embedder, SentenceTransformerEmbedder, StubEmbedder
+from ..index.embedder import (
+    Embedder,
+    SentenceTransformerEmbedder,
+    StubEmbedder,
+    build_embedder,
+)
 from ..retrieval.retrieve import HybridRetriever
 from ..store import TraceStore
 from .harness import K_VALUES, evaluate, format_report
@@ -68,9 +73,17 @@ def main(argv: list[str] | None = None) -> int:
         help="Index version directory (default: read from config/live_index.json).",
     )
     parser.add_argument(
+        "--embedder",
+        default=None,
+        help=(
+            "Embedder profile from config/models.yaml. MUST match the profile the "
+            "index was built with, or the query vectors are meaningless."
+        ),
+    )
+    parser.add_argument(
         "--model",
         default="sentence-transformers/all-MiniLM-L6-v2",
-        help="Sentence-transformers model id (ignored with --stub).",
+        help="Sentence-transformers model id (ignored with --embedder / --stub).",
     )
     parser.add_argument(
         "--stub",
@@ -94,9 +107,12 @@ def main(argv: list[str] | None = None) -> int:
     index_dir = _resolve_index_dir(args.index_dir)
     labels = load_labels(args.labels)
 
-    embedder: Embedder = (
-        StubEmbedder(dim=args.stub_dim) if args.stub else SentenceTransformerEmbedder(args.model)
-    )
+    if args.stub:
+        embedder: Embedder = StubEmbedder(dim=args.stub_dim)
+    elif args.embedder:
+        embedder = build_embedder(args.embedder)
+    else:
+        embedder = SentenceTransformerEmbedder(args.model)
 
     store = TraceStore(args.db)
     try:
