@@ -13,21 +13,15 @@ logic is fully unit-testable without a network or an index.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Iterable
 from typing import Any
+
+from .text import normalize_text as normalize_title
 
 # question -> the movie title mentioned in it (an LLM at runtime, a fake in tests).
 TitleExtractor = Callable[[str], str]
 # a normalized title -> the best-matching MovieRecord (or None).
 TitleLookup = Callable[[str], Any]
-
-_TITLE_PUNCT_RE = re.compile(r"[^a-z0-9]+")
-
-
-def normalize_title(title: str | None) -> str:
-    """Lowercase, fold punctuation to spaces, collapse whitespace."""
-    return " ".join(_TITLE_PUNCT_RE.sub(" ", (title or "").casefold()).split())
 
 
 def build_title_lookup(movies: Iterable[Any]) -> TitleLookup:

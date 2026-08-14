@@ -26,6 +26,7 @@ from typing import Any
 
 from .config import load_persona
 from .schemas import RecommendationSet
+from .text import normalize_text
 
 
 class Intent(str, Enum):
@@ -136,9 +137,6 @@ _CHITCHAT_PHRASES = (
     "how is your",
 )
 
-_PUNCT_RE = re.compile(r"[^a-z0-9\s]")
-_WS_RE = re.compile(r"\s+")
-
 # Factual questions ABOUT a specific film (cast, plot, director, "heard of X").
 # Deliberately specific so recommendation requests ("what's a good thriller")
 # are NOT caught. Matched on the normalized (punctuation-stripped) message.
@@ -156,16 +154,9 @@ _MOVIE_QUESTION_RES = [
 ]
 
 
-def _normalize(text: str) -> str:
-    """Lowercase, strip punctuation, collapse whitespace."""
-    lowered = (text or "").casefold()
-    lowered = _PUNCT_RE.sub(" ", lowered)
-    return _WS_RE.sub(" ", lowered).strip()
-
-
 def classify_intent(query: str) -> Intent:
     """Classify a raw user message as GREETING, META, or SEARCH (deterministic)."""
-    normalized = _normalize(query)
+    normalized = normalize_text(query)
     if not normalized:
         # An empty / punctuation-only message: treat as a greeting so Maya
         # introduces herself rather than searching for nothing.

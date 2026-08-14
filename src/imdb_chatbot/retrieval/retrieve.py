@@ -25,7 +25,6 @@ naturally.
 
 from __future__ import annotations
 
-import re
 from collections import OrderedDict
 from collections.abc import Iterable
 
@@ -34,6 +33,7 @@ from ..index.cache import EmbeddingCache
 from ..index.embedder import Embedder
 from ..schemas import MovieRecord, ParsedQuery, ScoredMovie
 from ..store import TraceStore
+from ..text import normalize_text as _normalize_name
 
 DENSE_K = 20
 SPARSE_K = 20
@@ -45,19 +45,6 @@ CACHE_SIZE = 128
 # vote_count and capped to ``FINAL_K``. Small enough that a weakly-relevant film
 # never enters, big enough that vote_count has room to reorder.
 RERANK_POOL = 20
-
-
-_NAME_PUNCT_RE = re.compile(r"[^a-z0-9]+")
-
-
-def _normalize_name(name: str | None) -> str:
-    """Lowercase, fold punctuation to spaces, collapse whitespace.
-
-    Folding punctuation makes name matching robust to hyphen/space/period
-    variants: "Bong Joon-ho" and "Bong Joon Ho" both normalize to "bong joon ho",
-    and "J.J. Abrams" to "j j abrams".
-    """
-    return " ".join(_NAME_PUNCT_RE.sub(" ", (name or "").casefold()).split())
 
 
 def rrf_fuse(rankings: Iterable[list[int]], k: int = RRF_K) -> dict[int, float]:
