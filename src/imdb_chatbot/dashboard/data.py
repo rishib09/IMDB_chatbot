@@ -12,6 +12,7 @@ change), and the ledger table - so all the shaping logic is unit-testable and
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -205,14 +206,8 @@ def _why_codes(store: TraceStore, rec: ChangeRecord) -> dict[str, int]:
     that are not in the store are simply skipped, so a record whose motivating
     traces were pruned still renders (with an empty 'why').
     """
-    counts: dict[str, int] = {}
-    for trace_id in rec.motivating_trace_ids:
-        trace = store.read_trace(trace_id)
-        if trace is None:
-            continue
-        for code in detect(trace):
-            counts[code] = counts.get(code, 0) + 1
-    return counts
+    traces = (store.read_trace(trace_id) for trace_id in rec.motivating_trace_ids)
+    return Counter(code for trace in traces if trace is not None for code in detect(trace))
 
 
 def ledger_table(store: TraceStore) -> list[dict]:

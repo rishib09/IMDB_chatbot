@@ -96,12 +96,8 @@ def _stale_or_repeated(trace: TurnTrace, shown_movies: set[int]) -> bool:
       already surfaced earlier in the session (needs the session context).
     """
     picks = trace.response.picks if trace.response else []
-    seen: set[tuple[str, int]] = set()
-    for pick in picks:
-        key = (pick.title, pick.year)
-        if key in seen:
-            return True
-        seen.add(key)
+    if any(count > 1 for count in Counter((p.title, p.year) for p in picks).values()):
+        return True
 
     if shown_movies:
         by_title_year = index_by_title_year(trace.candidates)
@@ -179,7 +175,4 @@ def count_codes(traces: Iterable[TurnTrace]) -> Counter[str]:
     A small aggregation helper for the dashboard / triage view: the returned
     ``Counter`` maps each taxonomy code to the number of traces that fired it.
     """
-    counter: Counter[str] = Counter()
-    for trace in traces:
-        counter.update(detect(trace))
-    return counter
+    return Counter(code for trace in traces for code in detect(trace))
