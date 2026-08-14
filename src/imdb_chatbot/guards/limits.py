@@ -147,9 +147,7 @@ def llm_call_params(overrides: dict | None = None, *, max_tokens: int | None = N
     passed by a caller is always overridden to enforce the ceiling.
     """
     max_tokens = max_tokens if max_tokens is not None else _per_query("max_tokens", DEFAULT_MAX_TOKENS)
-    params = dict(overrides or {})
-    params["max_tokens"] = max_tokens
-    return params
+    return {**(overrides or {}), "max_tokens": max_tokens}
 
 
 @dataclass

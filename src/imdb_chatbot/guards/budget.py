@@ -10,14 +10,18 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, date, datetime
+from enum import StrEnum
 
 from ..config import load_limits_config
 
 DEFAULT_BUDGET_USD = 3.0
 
-# Mode strings shared with the degradation ladder.
-MODE_NORMAL = "normal"
-MODE_L2 = "L2"
+
+class Mode(StrEnum):
+    """Serving mode, shared with the degradation ladder. Compares equal to its text."""
+
+    NORMAL = "normal"
+    L2 = "L2"
 
 
 def _default_budget() -> float:
@@ -65,11 +69,11 @@ class BudgetTracker:
         """True once today's spend EXCEEDS the daily budget (crossing $3 trips L2)."""
         return self.spent_today() > self.budget_usd
 
-    def mode(self) -> str:
+    def mode(self) -> Mode:
         """Current serving mode: ``L2`` if the budget is exhausted, else ``normal``."""
-        return MODE_L2 if self.exhausted() else MODE_NORMAL
+        return Mode.L2 if self.exhausted() else Mode.NORMAL
 
-    def record_and_mode(self, cost_usd: float) -> str:
+    def record_and_mode(self, cost_usd: float) -> Mode:
         """Record a cost and return the resulting serving mode in one call."""
         self.record(cost_usd)
         return self.mode()

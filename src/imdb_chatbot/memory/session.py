@@ -101,8 +101,7 @@ class ConversationState(BaseModel):
 
     def mark_shown(self, tmdb_ids: Iterable[int]) -> None:
         """Record movie ids as already shown so they are never recommended twice."""
-        for tmdb_id in tmdb_ids:
-            self.shown_movies.add(int(tmdb_id))
+        self.shown_movies.update(int(tmdb_id) for tmdb_id in tmdb_ids)
 
     # -- standing constraints (ticket #54) ------------------------------------
 
