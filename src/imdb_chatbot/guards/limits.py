@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from functools import partial
 
 from ..config import load_limits_config
 
@@ -49,12 +50,13 @@ def _limits() -> dict:
         return {}
 
 
-def _per_query(key: str, fallback: int) -> int:
-    return int(_limits().get("per_query", {}).get(key, fallback))
+def _limit(section: str, key: str, fallback: int) -> int:
+    """One int out of one section of limits.yaml, with a hard-coded fallback."""
+    return int(_limits().get(section, {}).get(key, fallback))
 
 
-def _per_session(key: str, fallback: int) -> int:
-    return int(_limits().get("per_session", {}).get(key, fallback))
+_per_query = partial(_limit, "per_query")
+_per_session = partial(_limit, "per_session")
 
 
 def count_tokens(text: str) -> int:

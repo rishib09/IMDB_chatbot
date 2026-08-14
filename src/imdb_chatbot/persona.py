@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import re
 from enum import Enum
+from functools import partial
 from typing import Any
 
 from .config import load_persona
@@ -198,25 +199,24 @@ def persona_reply(intent: Intent, persona: dict[str, Any] | None = None) -> Reco
     return RecommendationSet(picks=[], prose=prose)
 
 
-def generator_system_prompt(persona: dict[str, Any] | None = None) -> str:
-    """Maya's system prompt, prepended to the generator slot."""
-    persona = persona or load_persona()
-    return str(persona.get("system_prompt", "")).strip()
+def _persona_field(
+    persona: dict[str, Any] | None = None,
+    *,
+    key: str,
+    default: str = "",
+    strip: bool = True,
+) -> str:
+    """Read one field off the persona artifact, loading it when not supplied."""
+    value = str((persona or load_persona()).get(key, default))
+    return value.strip() if strip else value
 
 
-def chat_system_prompt(persona: dict[str, Any] | None = None) -> str:
-    """System prompt for the cheap LLM that answers CHITCHAT messages."""
-    persona = persona or load_persona()
-    return str(persona.get("chat_system_prompt", "")).strip()
-
-
-def chitchat_fallback(persona: dict[str, Any] | None = None) -> str:
-    """Deterministic conversational reply used when no LLM is available."""
-    persona = persona or load_persona()
-    return str(persona.get("chitchat", "")).strip()
-
-
-def persona_version(persona: dict[str, Any] | None = None) -> str:
-    """The persona artifact version (recorded as the trace prompt_version)."""
-    persona = persona or load_persona()
-    return str(persona.get("version", "persona-v1"))
+# The persona accessors. Each takes an optional persona dict, exactly as before.
+#   generator_system_prompt - Maya's system prompt, prepended to the generator slot
+#   chat_system_prompt      - system prompt for the cheap LLM answering CHITCHAT
+#   chitchat_fallback       - deterministic reply used when no LLM is available
+#   persona_version         - artifact version (recorded as the trace prompt_version)
+generator_system_prompt = partial(_persona_field, key="system_prompt")
+chat_system_prompt = partial(_persona_field, key="chat_system_prompt")
+chitchat_fallback = partial(_persona_field, key="chitchat")
+persona_version = partial(_persona_field, key="version", default="persona-v1", strip=False)
