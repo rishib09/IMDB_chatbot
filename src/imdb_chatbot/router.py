@@ -22,10 +22,10 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from enum import Enum
+from enum import StrEnum
 
 
-class FollowupKind(str, Enum):
+class FollowupKind(StrEnum):
     REFINE = "refine"
     REPLACE = "replace"
     CLARIFY = "clarify"

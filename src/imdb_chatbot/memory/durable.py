@@ -32,6 +32,7 @@ Two stores implement the ``MemoryStore`` protocol:
 from __future__ import annotations
 
 import time
+from collections import deque
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Literal, Protocol, runtime_checkable
@@ -153,11 +154,18 @@ class LocalJsonlStore:
         path = self._path(user_id)
         if not path.exists():
             return
-        lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
-        if len(lines) <= MAX_TRIPLES_PER_USER:
+        # Stream the file through a bounded window instead of loading a whole
+        # user's history to (usually) discover it is under the cap. One slot of
+        # headroom is what makes "over the cap" detectable without a count.
+        with path.open(encoding="utf-8") as fh:
+            tail = deque(
+                (ln.rstrip("\n") for ln in fh if ln.strip()),
+                maxlen=MAX_TRIPLES_PER_USER + 1,
+            )
+        if len(tail) <= MAX_TRIPLES_PER_USER:
             return
-        kept = lines[-MAX_TRIPLES_PER_USER:]
-        path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+        tail.popleft()
+        path.write_text("\n".join(tail) + "\n", encoding="utf-8")
 
 
 class HFDatasetStore:
@@ -292,11 +300,8 @@ class KnownPreferences(BaseModel):
         )
         conversation.mark_shown(self.shown_movies)
         if self.liked:
-            existing = list(conversation.preferences.get("liked", []))
-            for item in self.liked:
-                if item not in existing:
-                    existing.append(item)
-            conversation.preferences["liked"] = existing
+            merged = [*conversation.preferences.get("liked", []), *self.liked]
+            conversation.preferences["liked"] = list(dict.fromkeys(merged))
 
 
 def known_preferences(user_id: str, store: MemoryStore) -> KnownPreferences:
@@ -314,25 +319,21 @@ def known_preferences(user_id: str, store: MemoryStore) -> KnownPreferences:
     uid = normalize_user_id(user_id)
     triples = store.load(uid)
 
-    exclude_genres: list[str] = []
-    liked: list[str] = []
-    shown: set[int] = set()
-    for triple in triples:
-        if triple.relation in ("EXCLUDED", "DISLIKED"):
-            if triple.object not in exclude_genres:
-                exclude_genres.append(triple.object)
-        elif triple.relation == "LIKED":
-            if triple.object not in liked:
-                liked.append(triple.object)
-        elif triple.relation in ("WATCHED", "REJECTED"):
-            movie_id = _as_movie_id(triple.object)
-            if movie_id is not None:
-                shown.add(movie_id)
+    def objects(*relations: str) -> list[str]:
+        """The triple objects for those relations, de-duplicated, oldest first."""
+        return list(dict.fromkeys(t.object for t in triples if t.relation in relations))
+
+    shown = {
+        movie_id
+        for t in triples
+        if t.relation in ("WATCHED", "REJECTED")
+        if (movie_id := _as_movie_id(t.object)) is not None
+    }
 
     return KnownPreferences(
         user_id=uid,
-        exclude_genres=exclude_genres,
-        liked=liked,
+        exclude_genres=objects("EXCLUDED", "DISLIKED"),
+        liked=objects("LIKED"),
         shown_movies=shown,
         triples=list(triples),
     )

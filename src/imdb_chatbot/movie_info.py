@@ -13,29 +13,40 @@ logic is fully unit-testable without a network or an index.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Iterable
+from difflib import get_close_matches
+from functools import lru_cache
 from typing import Any
+
+from .text import normalize_text as normalize_title
 
 # question -> the movie title mentioned in it (an LLM at runtime, a fake in tests).
 TitleExtractor = Callable[[str], str]
 # a normalized title -> the best-matching MovieRecord (or None).
 TitleLookup = Callable[[str], Any]
 
-_TITLE_PUNCT_RE = re.compile(r"[^a-z0-9]+")
-
-
-def normalize_title(title: str | None) -> str:
-    """Lowercase, fold punctuation to spaces, collapse whitespace."""
-    return " ".join(_TITLE_PUNCT_RE.sub(" ", (title or "").casefold()).split())
+# Similarity a misspelled title must reach before we claim it means a real film.
+FUZZY_CUTOFF = 0.8
+# Distinct titles remembered per lookup (the corpus behind it never changes).
+LOOKUP_CACHE_SIZE = 512
 
 
 def build_title_lookup(movies: Iterable[Any]) -> TitleLookup:
     """Build a tolerant title -> MovieRecord lookup over the corpus.
 
-    Exact normalized match first; otherwise a substring match (either direction,
-    minimum 4 chars to avoid noise), breaking ties by vote_count so the canonical
-    film wins. Returns ``None`` when nothing plausible matches.
+    Three tiers, most confident first:
+
+    1. exact normalized match;
+    2. substring match either direction (minimum 4 chars, to avoid noise);
+    3. a fuzzy match, which is what makes a MISSPELLED title resolve at all -
+       "intersteller" reaches "interstellar" instead of the honest-but-useless
+       "couldn't find it". ``FUZZY_CUTOFF`` is deliberately high: at this point
+       the user has named a film we do not have, and a wrong confident answer is
+       worse than none.
+
+    Ties within a tier break by vote_count so the canonical film wins. Returns
+    ``None`` when nothing plausible matches. Answers are memoized - the corpus is
+    fixed for the life of the lookup, and questions repeat.
     """
     index: dict[str, list[Any]] = {}
     for movie in movies:
@@ -44,22 +55,19 @@ def build_title_lookup(movies: Iterable[Any]) -> TitleLookup:
     def _vote(movie: Any) -> int:
         return int(getattr(movie, "vote_count", 0) or 0)
 
+    @lru_cache(maxsize=LOOKUP_CACHE_SIZE)
     def lookup(title: str) -> Any:
         key = normalize_title(title)
         if not key:
             return None
         if key in index:
             return max(index[key], key=_vote)
-        best: Any = None
-        best_vote = -1
-        for corpus_key, movies_for_key in index.items():
-            if (len(key) >= 4 and key in corpus_key) or (
-                len(corpus_key) >= 4 and corpus_key in key
-            ):
-                for movie in movies_for_key:
-                    if _vote(movie) > best_vote:
-                        best, best_vote = movie, _vote(movie)
-        return best
+        keys = [
+            k
+            for k in index
+            if (len(key) >= 4 and key in k) or (len(k) >= 4 and k in key)
+        ] or get_close_matches(key, index, n=1, cutoff=FUZZY_CUTOFF)
+        return max((m for k in keys for m in index[k]), key=_vote, default=None)
 
     return lookup
 

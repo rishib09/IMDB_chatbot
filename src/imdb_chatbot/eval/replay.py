@@ -123,7 +123,7 @@ def _last_user_query(history: Sequence[str]) -> str | None:
     """Pull the previous turn's raw user query out of the history window lines."""
     for line in reversed(list(history)):
         if line.startswith("User: "):
-            return line[len("User: ") :].split(" | Bot")[0].strip()
+            return line.removeprefix("User: ").split(" | Bot")[0].strip()
     return None
 
 

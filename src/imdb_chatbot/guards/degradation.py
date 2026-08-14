@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -47,10 +48,7 @@ def honest_exit_message() -> str:
 
 def record_degradation(flags: Iterable[str], flag: str) -> list[str]:
     """Append ``flag`` to a degradation list without duplicating it (pure)."""
-    out = list(flags)
-    if flag not in out:
-        out.append(flag)
-    return out
+    return list(dict.fromkeys([*flags, flag]))
 
 
 # -- L2: LLM-free deterministic retrieval mode ---------------------------------
@@ -188,37 +186,29 @@ def health_check(
     """
     checks: dict[str, bool] = {"pointer": False, "index": False, "db": False}
     live_index_path = Path(live_index_path)
+    # Every failure exit is the same verdict; only WHICH checks got as far as
+    # True differs, and ``checks`` is bound by reference so it stays current.
+    refuse = partial(
+        HealthResult,
+        healthy=False,
+        message=HONEST_EXIT_MESSAGE,
+        checks=checks,
+        flags=[L3_FLAG],
+    )
 
     # 1. Pointer file resolves and names an active version + path.
     try:
         pointer = json.loads(live_index_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return HealthResult(
-            healthy=False,
-            message=HONEST_EXIT_MESSAGE,
-            checks=checks,
-            flags=[L3_FLAG],
-        )
+        return refuse()
 
-    active = pointer.get("active")
-    index_path = pointer.get("path")
-    if not active or not index_path:
-        return HealthResult(
-            healthy=False,
-            message=HONEST_EXIT_MESSAGE,
-            checks=checks,
-            flags=[L3_FLAG],
-        )
+    if not pointer.get("active") or not (index_path := pointer.get("path")):
+        return refuse()
     checks["pointer"] = True
 
     # 2. Index artifacts exist and are non-empty (the checksum/exists check).
     if not _index_dir_ok(Path(index_path)):
-        return HealthResult(
-            healthy=False,
-            message=HONEST_EXIT_MESSAGE,
-            checks=checks,
-            flags=[L3_FLAG],
-        )
+        return refuse()
     checks["index"] = True
 
     # 3. DB opens (optional). A raised opener means broken storage -> refuse.
@@ -229,12 +219,7 @@ def health_check(
             if callable(close):
                 close()
         except Exception:  # noqa: BLE001 - broken DB must degrade, not crash startup
-            return HealthResult(
-                healthy=False,
-                message=HONEST_EXIT_MESSAGE,
-                checks=checks,
-                flags=[L3_FLAG],
-            )
+            return refuse()
     checks["db"] = True
 
     return HealthResult(healthy=True, message="ok", checks=checks)

@@ -15,7 +15,9 @@ Field names are load-bearing: downstream tickets depend on them exactly as writt
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, Field, HttpUrl
 
@@ -73,6 +75,19 @@ class MovieRecommendation(BaseModel):
     year: int
     reason: str
     poster_url: HttpUrl | None = None
+
+
+def index_by_title_year(records: Iterable[Any]) -> dict[tuple[str, int], int]:
+    """``{(title, year): tmdb_id}`` - the join a pick uses to find its record.
+
+    A ``MovieRecommendation`` carries no id, so every consumer of a generated
+    answer (poster backfill, shown-movie bookkeeping, stale-repeat detection)
+    has to map picks back onto the turn's candidates by ``(title, year)``. This
+    is that map, built once instead of re-derived at each site. Duck-typed on
+    purpose: ``ScoredMovie`` and ``MovieRecord`` both fit. Later records win on
+    a duplicate key, as the inline comprehensions it replaces did.
+    """
+    return {(r.title, r.year): r.tmdb_id for r in records}
 
 
 class RecommendationSet(BaseModel):

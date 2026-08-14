@@ -37,7 +37,7 @@ from ..persona import (
     persona_reply,
 )
 from ..router import FollowupClassifier, FollowupKind, clarify_question, route_followup
-from ..schemas import ParsedQuery, RecommendationSet
+from ..schemas import ParsedQuery, RecommendationSet, index_by_title_year
 
 # A factory that builds the turn's GraphModels bound to a usage meter.
 ModelsFactory = Callable[[UsageMeter | None], GraphModels]
@@ -46,6 +46,18 @@ ChatFn = Callable[[str, "UsageMeter | None"], str]
 
 DEFAULT_CORPUS_PATH = Path("data") / "corpus.sqlite"
 DEFAULT_EMBEDDER = "sentence-transformers/all-MiniLM-L6-v2"
+
+# System prompts for the two one-shot classifications the cheap model performs.
+_TITLE_EXTRACT_PROMPT = (
+    "Extract the movie title the user is asking about. Reply with ONLY the "
+    "title, nothing else. If there is no title, reply with an empty line."
+)
+_FOLLOWUP_PROMPT = (
+    "You route a follow-up message in a movie chat. Reply with EXACTLY one "
+    "word: 'refine' (the user wants to adjust or narrow the movies just "
+    "shown), 'replace' (a brand-new, unrelated movie search), or 'clarify' "
+    "(they rejected the results but gave no new criteria)."
+)
 
 
 @dataclass
@@ -161,11 +173,12 @@ def load_live_resources(
     chat_model = _init_slot_model("rewriter", cfg)
     chat_system = chat_system_prompt()
 
-    def chat_fn(message: str, meter: UsageMeter | None) -> str:
+    def ask(system_prompt: str, user_msg: str, meter: UsageMeter | None = None) -> str:
+        """One cheap-model round trip, optionally metered into the turn's usage."""
         resp = chat_model.invoke(
             [
-                {"role": "system", "content": chat_system},
-                {"role": "user", "content": message},
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_msg},
             ]
         )
         if meter is not None:
@@ -177,49 +190,21 @@ def load_live_resources(
                 output_tokens=output_tokens,
                 reported_cost_usd=cost,
             )
-        return str(getattr(resp, "content", resp)).strip()
+        return str(getattr(resp, "content", resp))
+
+    def chat_fn(message: str, meter: UsageMeter | None) -> str:
+        return ask(chat_system, message, meter).strip()
+
+    def title_extractor(query: str) -> str:
+        return ask(_TITLE_EXTRACT_PROMPT, query).strip().strip('"')
+
+    def followup_fn(query: str, last_titles: list[str]) -> str:
+        titles = ", ".join(last_titles) or "(none)"
+        return ask(_FOLLOWUP_PROMPT, f"Movies just shown: {titles}\nUser's message: {query}")
 
     from ..movie_info import build_title_lookup
 
     movie_lookup = build_title_lookup(hybrid.movies_by_id.values())
-
-    def title_extractor(query: str) -> str:
-        resp = chat_model.invoke(
-            [
-                {
-                    "role": "system",
-                    "content": (
-                        "Extract the movie title the user is asking about. Reply "
-                        "with ONLY the title, nothing else. If there is no title, "
-                        "reply with an empty line."
-                    ),
-                },
-                {"role": "user", "content": query},
-            ]
-        )
-        return str(getattr(resp, "content", resp)).strip().strip('"')
-
-    def followup_fn(query: str, last_titles: list[str]) -> str:
-        titles = ", ".join(last_titles) or "(none)"
-        resp = chat_model.invoke(
-            [
-                {
-                    "role": "system",
-                    "content": (
-                        "You route a follow-up message in a movie chat. Reply with "
-                        "EXACTLY one word: 'refine' (the user wants to adjust or "
-                        "narrow the movies just shown), 'replace' (a brand-new, "
-                        "unrelated movie search), or 'clarify' (they rejected the "
-                        "results but gave no new criteria)."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": f"Movies just shown: {titles}\nUser's message: {query}",
-                },
-            ]
-        )
-        return str(getattr(resp, "content", resp))
 
     return LiveResources(
         retriever=retriever,
@@ -252,7 +237,7 @@ def _enrich_posters(
     """
     if store is None or not rec.picks:
         return rec
-    by_title_year = {(c.title, c.year): c.tmdb_id for c in candidates}
+    by_title_year = index_by_title_year(candidates)
     for pick in rec.picks:
         tmdb_id = by_title_year.get((pick.title, pick.year))
         if tmdb_id is None:

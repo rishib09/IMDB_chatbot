@@ -116,7 +116,7 @@ def write_live_pointer(
 
     payload = {
         "active": version,
-        "path": str(out_dir).replace("\\", "/"),
+        "path": out_dir.as_posix(),
         "updated_utc": datetime.now(UTC).isoformat(),
         "note": note,
     }

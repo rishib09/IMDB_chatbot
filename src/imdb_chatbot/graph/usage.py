@@ -15,6 +15,7 @@ attributes off whatever object the model returned, so a fake object with a
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -53,10 +54,7 @@ class UsageMeter:
         output_tokens: int = 0,
         reported_cost_usd: float = 0.0,
     ) -> SlotUsage:
-        usage = self.slots.get(slot)
-        if usage is None:
-            usage = SlotUsage(slot=slot)
-            self.slots[slot] = usage
+        usage = self.slots.setdefault(slot, SlotUsage(slot=slot))
         if model:
             usage.model = model
         usage.input_tokens += int(input_tokens or 0)
@@ -148,11 +146,12 @@ def estimate_cost(
         return round(meter.reported_cost_usd, 6)
 
     pricing = pricing if pricing is not None else load_pricing()
-    total = 0.0
-    for usage in meter.slots.values():
-        price = pricing.get(usage.model)
-        if not price:
-            continue
-        total += usage.input_tokens / 1_000_000 * float(price.get("input", 0.0))
-        total += usage.output_tokens / 1_000_000 * float(price.get("output", 0.0))
+    # fsum, not sum: a turn's per-slot costs are tiny and of mixed magnitude,
+    # exactly where naive accumulation loses digits.
+    total = math.fsum(
+        usage.input_tokens / 1_000_000 * float(price.get("input", 0.0))
+        + usage.output_tokens / 1_000_000 * float(price.get("output", 0.0))
+        for usage in meter.slots.values()
+        if (price := pricing.get(usage.model))
+    )
     return round(total, 6)
