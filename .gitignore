@@ -20,6 +20,8 @@ dist/
 
 # Data / built index artifacts (large; shipped separately)
 data/
+# Raw TMDB archive (#78): build-time only, ~200 MB, never ships and never commits.
+data/raw_tmdb.sqlite
 *.faiss
 *.bm25.pkl
 *.sqlite

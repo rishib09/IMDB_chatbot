@@ -1,4 +1,11 @@
-"""SQLite trace store - the system-of-record for turn traces and the change ledger.
+"""SQLite stores - turn traces / the change ledger, and the raw TMDB archive.
+
+Two stores live here, on purpose kept in SEPARATE files:
+
+- ``TraceStore`` -> ``data/corpus.sqlite``. Opened at runtime by the dashboard,
+  so it ships with the deploy and must stay small.
+- ``RawArchive`` -> ``data/raw_tmdb.sqlite``. Build-time only, hundreds of MB at
+  full corpus size, no runtime consumer (ticket #78 / decision D0 #62).
 
 Design constraints (from ticket #12):
 
@@ -18,11 +25,14 @@ Rich objects (``TurnTrace``, ``ChangeRecord``) are stored as JSON via
 
 from __future__ import annotations
 
+import gzip
+import json
 import queue
 import sqlite3
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Self
 
@@ -210,6 +220,14 @@ class TraceStore:
         with self._read_lock:
             return self._read_conn.execute("SELECT COUNT(*) FROM movies").fetchone()[0]
 
+    def movie_ids(self) -> list[int]:
+        """Every catalog ``tmdb_id``, ascending - without parsing 46k records."""
+        with self._read_lock:
+            rows = self._read_conn.execute(
+                "SELECT tmdb_id FROM movies ORDER BY tmdb_id"
+            ).fetchall()
+        return [int(row["tmdb_id"]) for row in rows]
+
     def read_all_movies(self) -> list[MovieRecord]:
         """Return every catalog row, ordered by ``tmdb_id`` (read-only).
 
@@ -240,8 +258,6 @@ class TraceStore:
         ``data`` is the raw source payload serialized as a JSON string; it is
         never silently dropped so failures stay auditable.
         """
-        from datetime import UTC, datetime
-
         ts = datetime.now(UTC).isoformat()
 
         def _do(conn: sqlite3.Connection) -> None:
@@ -311,6 +327,128 @@ class TraceStore:
         self._writer.join(timeout=10)
         with self._read_lock:
             self._read_conn.close()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+
+_RAW_SCHEMA = """
+CREATE TABLE IF NOT EXISTS raw_movies (
+    tmdb_id     INTEGER PRIMARY KEY,
+    fetched_at  TEXT NOT NULL,
+    append_spec TEXT NOT NULL,
+    payload     BLOB NOT NULL
+);
+"""
+
+
+class RawArchive:
+    """Archive of raw TMDB payloads, gzipped JSON, one row per ``tmdb_id``.
+
+    ``MovieRecord`` is a *derived* projection; this is what it is derived from.
+    Any future schema question ("do we have producers? keywords?") becomes a
+    re-derivation instead of a 46k re-fetch.
+
+    Three properties do the work:
+
+    - **Separate file.** ``data/corpus.sqlite`` is opened at runtime and ships;
+      this archive is hundreds of MB at full corpus size and has no runtime
+      consumer, so it never goes near the deploy artifact.
+    - **``tmdb_id`` is the PRIMARY KEY**, so an interrupted backfill resumes by
+      simply skipping ids already present - see :meth:`stored_ids`.
+    - **``append_spec`` is stored per row**: the namespaces that were actually
+      requested. Widening the fetch later re-fetches only the rows written under
+      the older spec instead of paying another full sweep.
+
+    Single-threaded by design (one build-time writer), so unlike ``TraceStore``
+    it needs no writer thread. Every :meth:`put` commits, which is exactly what
+    makes a killed backfill resumable.
+    """
+
+    def __init__(self, path: str | Path, *, busy_timeout_ms: int = 5000) -> None:
+        self.path = str(path)
+        parent = Path(self.path).parent
+        if str(parent):
+            parent.mkdir(parents=True, exist_ok=True)
+        self._conn = sqlite3.connect(self.path)
+        self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA journal_mode=WAL;")
+        self._conn.execute("PRAGMA synchronous=NORMAL;")
+        self._conn.execute(f"PRAGMA busy_timeout={busy_timeout_ms};")
+        self._conn.executescript(_RAW_SCHEMA)
+        self._conn.commit()
+
+    def put(
+        self,
+        tmdb_id: int,
+        payload: Mapping[str, Any],
+        *,
+        append_spec: str,
+        fetched_at: str | None = None,
+    ) -> int:
+        """Store one payload gzipped; returns the stored (compressed) byte count.
+
+        Keys are sorted so the same payload always yields the same blob. JSON
+        object order carries no meaning, and determinism makes the archive
+        diffable.
+        """
+        blob = gzip.compress(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8"),
+            compresslevel=6,
+        )
+        ts = fetched_at or datetime.now(UTC).isoformat()
+        self._conn.execute(
+            "INSERT OR REPLACE INTO raw_movies "
+            "(tmdb_id, fetched_at, append_spec, payload) VALUES (?, ?, ?, ?)",
+            (int(tmdb_id), ts, append_spec, blob),
+        )
+        self._conn.commit()
+        return len(blob)
+
+    def get(self, tmdb_id: int) -> dict[str, Any] | None:
+        """Return the stored payload, decompressed and parsed (None if absent)."""
+        row = self._conn.execute(
+            "SELECT payload FROM raw_movies WHERE tmdb_id = ?", (int(tmdb_id),)
+        ).fetchone()
+        if row is None:
+            return None
+        return json.loads(gzip.decompress(row["payload"]).decode("utf-8"))
+
+    def spec_of(self, tmdb_id: int) -> str | None:
+        """The ``append_to_response`` spec this row was fetched under."""
+        row = self._conn.execute(
+            "SELECT append_spec FROM raw_movies WHERE tmdb_id = ?", (int(tmdb_id),)
+        ).fetchone()
+        return None if row is None else str(row["append_spec"])
+
+    def stored_ids(self, *, append_spec: str | None = None) -> set[int]:
+        """Ids already archived - the backfill's resume set.
+
+        Pass ``append_spec`` to count only rows fetched under that exact spec:
+        a row written under an older, narrower spec is NOT done, and skipping it
+        would freeze the stale payload in place forever.
+        """
+        if append_spec is None:
+            rows = self._conn.execute("SELECT tmdb_id FROM raw_movies").fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT tmdb_id FROM raw_movies WHERE append_spec = ?", (append_spec,)
+            ).fetchall()
+        return {int(row["tmdb_id"]) for row in rows}
+
+    def count(self) -> int:
+        return int(self._conn.execute("SELECT COUNT(*) FROM raw_movies").fetchone()[0])
+
+    def stored_bytes(self) -> int:
+        """Total compressed payload bytes (excludes SQLite page overhead)."""
+        row = self._conn.execute("SELECT SUM(LENGTH(payload)) FROM raw_movies").fetchone()
+        return int(row[0] or 0)
+
+    def close(self) -> None:
+        self._conn.close()
 
     def __enter__(self) -> Self:
         return self
