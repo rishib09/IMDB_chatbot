@@ -50,6 +50,21 @@ def test_lookup_unknown_returns_none() -> None:
     assert build_title_lookup(_movies())("movie obsession") is None
 
 
+def test_fuzzy_match_tolerates_typos_without_inventing_a_match() -> None:
+    """The assumption fuzzy matching puts at risk: an unknown title stays unknown.
+
+    Typo tolerance is only worth having if it cannot turn "a film we do not
+    have" into a confident wrong answer - the user would be told facts about the
+    wrong movie. So both halves are pinned: a one-character slip resolves, and
+    titles that merely share letters with the corpus still return None.
+    """
+    lookup = build_title_lookup(_movies())
+    assert lookup("parasit").tmdb_id == 1  # dropped letter
+    assert lookup("The Dark Knght").tmdb_id == 2  # transposed/missing letter
+    for unknown in ("movie obsession", "the dark tower", "paradise", "xyzzy"):
+        assert lookup(unknown) is None, unknown
+
+
 def test_format_movie_facts_uses_stored_fields() -> None:
     facts = format_movie_facts(_movies()[0])
     assert "Parasite" in facts
