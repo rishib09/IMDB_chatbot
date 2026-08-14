@@ -47,10 +47,7 @@ def honest_exit_message() -> str:
 
 def record_degradation(flags: Iterable[str], flag: str) -> list[str]:
     """Append ``flag`` to a degradation list without duplicating it (pure)."""
-    out = list(flags)
-    if flag not in out:
-        out.append(flag)
-    return out
+    return list(dict.fromkeys([*flags, flag]))
 
 
 # -- L2: LLM-free deterministic retrieval mode ---------------------------------

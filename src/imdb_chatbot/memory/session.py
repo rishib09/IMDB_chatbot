@@ -28,6 +28,11 @@ from ..store import TraceStore
 WINDOW_SIZE = 6
 
 
+def _merge(existing: Iterable[str], new: Iterable[str]) -> list[str]:
+    """Existing items, then the truthy new ones, de-duplicated and order-preserving."""
+    return list(dict.fromkeys([*existing, *(item for item in new if item)]))
+
+
 class Turn(BaseModel):
     """One recorded exchange in the session history.
 
@@ -91,12 +96,8 @@ class ConversationState(BaseModel):
         genres: Iterable[str] = (),
     ) -> None:
         """Merge new exclusions in, de-duplicated and order-preserving."""
-        for actor in actors:
-            if actor and actor not in self.exclude_actors:
-                self.exclude_actors.append(actor)
-        for genre in genres:
-            if genre and genre not in self.exclude_genres:
-                self.exclude_genres.append(genre)
+        self.exclude_actors = _merge(self.exclude_actors, actors)
+        self.exclude_genres = _merge(self.exclude_genres, genres)
 
     def mark_shown(self, tmdb_ids: Iterable[int]) -> None:
         """Record movie ids as already shown so they are never recommended twice."""
