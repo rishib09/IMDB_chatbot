@@ -37,7 +37,7 @@ from ..persona import (
     persona_reply,
 )
 from ..router import FollowupClassifier, FollowupKind, clarify_question, route_followup
-from ..schemas import ParsedQuery, RecommendationSet
+from ..schemas import ParsedQuery, RecommendationSet, index_by_title_year
 
 # A factory that builds the turn's GraphModels bound to a usage meter.
 ModelsFactory = Callable[[UsageMeter | None], GraphModels]
@@ -252,7 +252,7 @@ def _enrich_posters(
     """
     if store is None or not rec.picks:
         return rec
-    by_title_year = {(c.title, c.year): c.tmdb_id for c in candidates}
+    by_title_year = index_by_title_year(candidates)
     for pick in rec.picks:
         tmdb_id = by_title_year.get((pick.title, pick.year))
         if tmdb_id is None:

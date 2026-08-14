@@ -21,7 +21,7 @@ from collections.abc import Iterable
 from pydantic import BaseModel, Field
 
 from ..graph import GraphModels, RetrieverFn, TurnResult, UsageMeter, run_turn
-from ..schemas import ParsedQuery, TurnState
+from ..schemas import ParsedQuery, TurnState, index_by_title_year
 from ..store import TraceStore
 
 # Last N turns kept verbatim in the short-term window (PRD section 6).
@@ -202,7 +202,7 @@ def update_state_from_result(conversation: ConversationState, result: TurnResult
     recommended_titles: list[str] = []
     shown_ids: list[int] = []
     if final.response is not None and final.response.picks:
-        by_title_year = {(c.title, c.year): c.tmdb_id for c in final.candidates}
+        by_title_year = index_by_title_year(final.candidates)
         for pick in final.response.picks:
             recommended_titles.append(f"{pick.title} ({pick.year})")
             tmdb_id = by_title_year.get((pick.title, pick.year))

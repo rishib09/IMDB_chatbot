@@ -46,7 +46,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Iterable
 
-from ..schemas import TurnTrace
+from ..schemas import TurnTrace, index_by_title_year
 
 # Mirror the graph's retry caps (see graph/build.py ``MAX_EXTRACT_RETRIES`` /
 # ``MAX_GEN_RETRIES``). Kept as local constants so this pure detection module
@@ -104,7 +104,7 @@ def _stale_or_repeated(trace: TurnTrace, shown_movies: set[int]) -> bool:
         seen.add(key)
 
     if shown_movies:
-        by_title_year = {(c.title, c.year): c.tmdb_id for c in trace.candidates}
+        by_title_year = index_by_title_year(trace.candidates)
         for pick in picks:
             tmdb_id = by_title_year.get((pick.title, pick.year))
             if tmdb_id is not None and tmdb_id in shown_movies:
