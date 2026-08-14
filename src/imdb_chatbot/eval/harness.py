@@ -31,7 +31,8 @@ degrade gracefully to whatever depth is available.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from statistics import fmean
 
 from ..retrieval.retrieve import HybridRetriever
 from .labels import CATEGORIES, LabeledQuery
@@ -90,10 +91,8 @@ class EvalReport:
     def to_dict(self) -> dict:
         """A plain-dict view (handy for JSON dumps / assertions)."""
         return {
-            "overall": _summary_to_dict(self.overall),
-            "per_category": {
-                cat: _summary_to_dict(summ) for cat, summ in self.per_category.items()
-            },
+            "overall": asdict(self.overall),
+            "per_category": {cat: asdict(summ) for cat, summ in self.per_category.items()},
         }
 
 
@@ -169,28 +168,22 @@ def _summarize(
     answerable = [r for r in results if r.num_relevant > 0]
     n_answerable = len(answerable)
 
+    # ``fmean`` raises on an empty sequence, so every mean keeps its guard.
     if n_answerable:
-        hit_at = {
-            k: sum(1 for r in answerable if r.hit_at[k]) / n_answerable for k in k_values
-        }
-        recall_at = {
-            k: sum(r.recall_at[k] or 0.0 for r in answerable) / n_answerable for k in k_values
-        }
-        mrr = sum(r.reciprocal_rank or 0.0 for r in answerable) / n_answerable
+        hit_at = {k: fmean(r.hit_at[k] for r in answerable) for k in k_values}
+        recall_at = {k: fmean(r.recall_at[k] or 0.0 for r in answerable) for k in k_values}
+        mrr = fmean(r.reciprocal_rank or 0.0 for r in answerable)
     else:
         hit_at = {k: 0.0 for k in k_values}
         recall_at = {k: 0.0 for k in k_values}
         mrr = 0.0
 
     exclusion_queries = [r for r in results if r.has_exclusions]
-    if exclusion_queries:
-        exclusion_precision: float | None = sum(
-            1.0 for r in exclusion_queries if r.exclusion_clean
-        ) / len(exclusion_queries)
-    else:
-        exclusion_precision = None
+    exclusion_precision: float | None = (
+        fmean(bool(r.exclusion_clean) for r in exclusion_queries) if exclusion_queries else None
+    )
 
-    fallback_rate = (sum(1 for r in results if r.fell_back) / n) if n else 0.0
+    fallback_rate = fmean(r.fell_back for r in results) if n else 0.0
     fallback_is_correct = label == "ood_unanswerable"
 
     return CategorySummary(
@@ -232,21 +225,6 @@ def evaluate(
 
 
 # -- reporting ----------------------------------------------------------------
-
-
-def _summary_to_dict(summ: CategorySummary) -> dict:
-    return {
-        "label": summ.label,
-        "n": summ.n,
-        "n_answerable": summ.n_answerable,
-        "hit_at": dict(summ.hit_at),
-        "recall_at": dict(summ.recall_at),
-        "mrr": summ.mrr,
-        "exclusion_precision": summ.exclusion_precision,
-        "n_exclusion_queries": summ.n_exclusion_queries,
-        "fallback_rate": summ.fallback_rate,
-        "fallback_is_correct": summ.fallback_is_correct,
-    }
 
 
 def format_report(report: EvalReport, *, k_values: Sequence[int] = K_VALUES) -> str:
