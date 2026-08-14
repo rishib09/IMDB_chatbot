@@ -1,9 +1,10 @@
 """CLI entry: ``python -m imdb_chatbot.index --db data/corpus.sqlite``.
 
 Builds the real, versioned FAISS + BM25 index from a corpus DB and flips the
-live-index pointer. Uses the real ``SentenceTransformerEmbedder`` by default
-(requires the ``embed`` extra), or the dependency-free ``StubEmbedder`` with
-``--stub`` for smoke tests.
+live-index pointer. Uses the local ``SentenceTransformerEmbedder`` by default
+(requires the ``embed`` extra), a config profile with ``--embedder <profile>``
+(e.g. ``openai-3-large-1024``, which bills through OpenRouter), or the
+dependency-free ``StubEmbedder`` with ``--stub`` for smoke tests.
 """
 
 from __future__ import annotations
@@ -21,7 +22,12 @@ from .build import (
     build_index,
 )
 from .cache import EmbeddingCache
-from .embedder import Embedder, SentenceTransformerEmbedder, StubEmbedder
+from .embedder import (
+    Embedder,
+    SentenceTransformerEmbedder,
+    StubEmbedder,
+    build_embedder,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -47,9 +53,17 @@ def main(argv: list[str] | None = None) -> int:
         help="Embedding cache SQLite path (default: data/embedding_cache.sqlite).",
     )
     parser.add_argument(
+        "--embedder",
+        default=None,
+        help=(
+            "Embedder profile from config/models.yaml (default: embedder.default). "
+            "Overrides --model; ignored with --stub."
+        ),
+    )
+    parser.add_argument(
         "--model",
         default="sentence-transformers/all-MiniLM-L6-v2",
-        help="Sentence-transformers model id (ignored with --stub).",
+        help="Sentence-transformers model id (ignored with --embedder / --stub).",
     )
     parser.add_argument(
         "--stub",
@@ -71,9 +85,12 @@ def main(argv: list[str] | None = None) -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
-    embedder: Embedder = (
-        StubEmbedder(dim=args.stub_dim) if args.stub else SentenceTransformerEmbedder(args.model)
-    )
+    if args.stub:
+        embedder: Embedder = StubEmbedder(dim=args.stub_dim)
+    elif args.embedder:
+        embedder = build_embedder(args.embedder)
+    else:
+        embedder = SentenceTransformerEmbedder(args.model)
 
     store = TraceStore(args.db)
     cache = EmbeddingCache(args.cache)

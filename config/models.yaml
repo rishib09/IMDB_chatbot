@@ -27,6 +27,42 @@ slots:
     default: deepseek/deepseek-chat
     temperature: 0
 
+# Dense embedder (ticket #76 / B11). `default` selects a profile below; `fallback`
+# is what a missing key, a network failure, or an unknown profile name degrades to.
+# The local model stays the fallback regardless of which profile wins the sweep,
+# because dense retrieval must survive an outage (L2 = LLM-free retrieval).
+#
+# `dimensions` is Matryoshka truncation on the OpenAI v3 models. Billing is per
+# INPUT token, not per output dimension, so it costs nothing to shrink - it only
+# trades index size (n x dims x 4 bytes) against fidelity. Over 46,364 movies:
+# 384d=71MB, 512d=95MB, 1024d=190MB, 3072d=570MB.
+#
+# Switching `default` to a hosted profile makes EVERY query a network round-trip
+# (~100-300 ms) instead of ~10-20 ms local. Measure before flipping it.
+embedder:
+  default: local
+  fallback: local
+  profiles:
+    local:
+      kind: sentence_transformer
+      model: sentence-transformers/all-MiniLM-L6-v2   # 384d, offline, free
+    openai-3-large-512:
+      kind: openrouter
+      model: openai/text-embedding-3-large
+      dimensions: 512
+    openai-3-large-1024:
+      kind: openrouter
+      model: openai/text-embedding-3-large
+      dimensions: 1024
+    openai-3-large-3072:
+      kind: openrouter
+      model: openai/text-embedding-3-large
+      dimensions: 3072
+    openai-3-small-1536:
+      kind: openrouter
+      model: openai/text-embedding-3-small
+      dimensions: 1536
+
 # Approximate OpenRouter list prices in USD per 1,000,000 tokens. Used ONLY to
 # estimate a turn's cost when OpenRouter does not return an actual per-request
 # cost (the app requests usage.include, so real costs are preferred when present).
@@ -44,3 +80,10 @@ pricing:
   deepseek/deepseek-chat:
     input: 0.14
     output: 0.28
+  # Embedding models bill input only; `output: 0` keeps the table shape uniform.
+  openai/text-embedding-3-large:
+    input: 0.13
+    output: 0.0
+  openai/text-embedding-3-small:
+    input: 0.02
+    output: 0.0

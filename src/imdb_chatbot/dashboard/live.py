@@ -45,7 +45,6 @@ ModelsFactory = Callable[[UsageMeter | None], GraphModels]
 ChatFn = Callable[[str, "UsageMeter | None"], str]
 
 DEFAULT_CORPUS_PATH = Path("data") / "corpus.sqlite"
-DEFAULT_EMBEDDER = "sentence-transformers/all-MiniLM-L6-v2"
 
 # System prompts for the two one-shot classifications the cheap model performs.
 _TITLE_EXTRACT_PROMPT = (
@@ -119,7 +118,7 @@ class LiveResources:
 def load_live_resources(
     *,
     corpus_path: Path | str | None = None,
-    embedder_model: str = DEFAULT_EMBEDDER,
+    embedder_profile: str | None = None,
 ) -> LiveResources:
     """Build the live resource bundle from the on-disk index + corpus + config.
 
@@ -131,7 +130,7 @@ def load_live_resources(
     from ..graph.models import _init_slot_model, build_models
     from ..graph.usage import load_pricing, usage_from_message
     from ..index.build import load_index
-    from ..index.embedder import SentenceTransformerEmbedder
+    from ..index.embedder import build_embedder
     from ..persona import chat_system_prompt, persona_version
     from ..retrieval.retrieve import HybridRetriever
     from ..store import TraceStore
@@ -159,7 +158,10 @@ def load_live_resources(
         )
 
     loaded = load_index(ptr["path"])
-    embedder = SentenceTransformerEmbedder(embedder_model)
+    # Which embedder runs is config (models.yaml -> embedder.default), and it must
+    # match the one the live index was built with. A hosted profile that cannot be
+    # constructed degrades to the local model inside build_embedder.
+    embedder = build_embedder(embedder_profile, cfg)
     store = TraceStore(Path(corpus_path or DEFAULT_CORPUS_PATH))
     hybrid = HybridRetriever.from_store(loaded, embedder, store)
 
