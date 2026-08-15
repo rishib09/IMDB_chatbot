@@ -69,7 +69,7 @@ def test_valid_inputs_pass_through_intact() -> None:
 def test_graph_turn_with_demonym_region_reaches_generate() -> None:
     """Attacks: the guard runs inside the extract node, before the region default."""
 
-    def retriever(query: str, parsed: ParsedQuery) -> list[ScoredMovie]:
+    def retriever(query: str, parsed: ParsedQuery, shown_movies=()) -> list[ScoredMovie]:
         return [
             ScoredMovie(tmdb_id=m.tmdb_id, title=m.title, year=m.year, regions=m.regions)
             for m in CORPUS

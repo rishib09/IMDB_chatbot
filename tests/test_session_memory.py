@@ -255,7 +255,7 @@ def test_history_line_records_raw_query_and_recommendation() -> None:
 def _region_aware_retriever(catalog: list[ScoredMovie], seen: list[ParsedQuery]):
     """Stub retriever where region='korean' is unsatisfiable (empties the pool)."""
 
-    def retrieve(query: str, parsed: ParsedQuery) -> list[ScoredMovie]:
+    def retrieve(query: str, parsed: ParsedQuery, shown_movies=()) -> list[ScoredMovie]:
         seen.append(parsed)
         return [] if parsed.region == "korean" else list(catalog)
 
