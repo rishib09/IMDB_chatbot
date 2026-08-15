@@ -1,0 +1,92 @@
+interactions:
+- request:
+    body: '{"messages":[{"content":"You are Maya, a warm and witty expert movie recommender.
+      The user sent a casual, conversational message - NOT a movie search. Reply in
+      one or two friendly sentences, in character, then ALWAYS offer to help by asking
+      something like: \"Would you like me to recommend a movie, or is this just a
+      chat?\" Keep it short. Do not list, name, or invent any movies.","role":"system"},{"content":"how
+      are you today?","role":"user"}],"model":"google/gemma-3-12b-it","stream":false,"temperature":0.0,"usage":{"include":true}}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '537'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+      user-agent:
+      - OpenAI/Python 2.49.0
+      x-stainless-arch:
+      - other:amd64
+      x-stainless-async:
+      - 'false'
+      x-stainless-lang:
+      - python
+      x-stainless-os:
+      - Windows
+      x-stainless-package-version:
+      - 2.49.0
+      x-stainless-raw-response:
+      - 'true'
+      x-stainless-retry-count:
+      - '0'
+      x-stainless-runtime:
+      - CPython
+      x-stainless-runtime-version:
+      - 3.14.3
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAA/+JSgAEuAAAAAP//fFJNb9NAEP0ry164OCUmSdP6ggRcKiE4AQeErLV3Yk+yH9bO
+        OG1UWeI/8A/5JYwbkrqi4IutNzNv3nvje41WF7qBMMvXV5fr5SpfXs/47mNlP3x+V/kvePW2X+X7
+        1ulMx2oLNUt73Rq+qKPvHDDGIKU6gWEQqkeWTPtowY3sMTYOXjXgvZktZvnraoYsQ12Ke7SQpOU9
+        QHcTNskITAdi8OUGQwOpSxhkZeidkwqkPdZQMo5DR6xuo0Cki2/iJVi408U80y42wl7RqUvIkNpS
+        VJLoLTRx7GRVMIx7KP9R9UBkGtDFvU7RyVsbIiQ2YVRfx8AwatOf2kwdYq/oFoAVtyI8UzcvvbJR
+        PhVJTMGidQf168dPte2JFYRtPIxFbkHVGMCLklrtsQJ6ob7G3tkHSoc7UB4UR5VAEvfCpIzyEhxk
+        KiaFNC6kI6tR42XeiLgEm56MO9k/OpN9R2AYvme6P3mToHzHJccdBAnsejV6O932DC8uM82RjTsj
+        +SIfO0kimF/M5cnnucwildUh7nSxMY4ge0pfWmCDjsa9talbsGc6udoDUt4mZJjCprcYp8D410yA
+        4Shjyt13xGLalxg2kCDIT/O30mea/oid9s6X6+d7H0OipwOr5fBMhFN553tMXaGXg/zH9zAMvwEA
+        AP//AwDTn7wjugMAAA==
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      cf-ray:
+      - a2b3435d9ca733a6-EWR
+      connection:
+      - keep-alive
+      content-encoding:
+      - gzip
+      content-type:
+      - application/json
+      date:
+      - Fri, 14 Aug 2026 22:05:49 GMT
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      server:
+      - cloudflare
+      set-cookie:
+      - __cf_bm=gPLPb4Xq8SmcBuYewQTR1HA68jctlwb1T1LycyMpmlE-1786745149.0566773-1.0.1.1-q1BoiCpelGcBBm6hx6Jk46RbwPBQkCpTFn9X9TFSRKz8GrVpJFLZgJlnb8eXcd5mFANNCqhQahnhfAf6com34w1pd1Lf5s9UpW_TgzhmRu_TdWH0JKv_CSG89LA5O9u5;
+        HttpOnly; SameSite=None; Secure; Path=/; Domain=openrouter.ai; Expires=Fri,
+        14 Aug 2026 22:35:49 GMT
+      transfer-encoding:
+      - chunked
+      x-content-type-options:
+      - nosniff
+      x-generation-id:
+      - gen-1786745149-txNbdLUCbmVi8Bu51vhl
+    status:
+      code: 200
+      message: OK
+version: 1

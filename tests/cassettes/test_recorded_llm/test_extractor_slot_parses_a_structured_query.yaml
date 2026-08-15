@@ -1,0 +1,100 @@
+interactions:
+- request:
+    body: '{"messages":[{"content":"Extract structured search filters from the query
+      as JSON matching the ParsedQuery schema (genres, similar_to, director, actor,
+      exclude_actors, exclude_genres, min_year, max_year, min_rating, region). Decide
+      a named person''s ROLE from the wording: ''directed by'', ''by'', ''from director'',
+      or a bare name (''Tarantino movies'') -> set ''director''; ''with'', ''starring'',
+      ''featuring'', ''stars'' -> set ''actor''. Examples: ''movies by Christopher
+      Nolan'' -> director=''Christopher Nolan''; ''movies with Tom Hanks'' -> actor=''Tom
+      Hanks''; ''films starring Meryl Streep'' -> actor=''Meryl Streep''. Never put
+      an actor in ''director'' or a director in ''actor''. Omit unknown fields.\n\nQuery:
+      movies directed by Christopher Nolan after 2010","role":"user"}],"model":"google/gemma-3-12b-it","response_format":{"type":"json_schema","json_schema":{"schema":{"properties":{"genres":{"default":[],"items":{"type":"string"},"title":"Genres","type":"array"},"similar_to":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Similar
+      To"},"director":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Director"},"actor":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Actor"},"exclude_actors":{"default":[],"items":{"type":"string"},"title":"Exclude
+      Actors","type":"array"},"exclude_genres":{"default":[],"items":{"type":"string"},"title":"Exclude
+      Genres","type":"array"},"min_year":{"anyOf":[{"type":"integer"},{"type":"null"}],"title":"Min
+      Year"},"max_year":{"anyOf":[{"type":"integer"},{"type":"null"}],"title":"Max
+      Year"},"min_rating":{"anyOf":[{"type":"number"},{"type":"null"}],"title":"Min
+      Rating"},"region":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Region"}},"title":"ParsedQuery","type":"object","additionalProperties":false,"required":["genres","similar_to","director","actor","exclude_actors","exclude_genres","min_year","max_year","min_rating","region"]},"name":"ParsedQuery","strict":true}},"stream":false,"temperature":0.0,"usage":{"include":true}}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1968'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+      user-agent:
+      - OpenAI/Python 2.49.0
+      x-stainless-arch:
+      - other:amd64
+      x-stainless-async:
+      - 'false'
+      x-stainless-helper-method:
+      - chat.completions.parse
+      x-stainless-lang:
+      - python
+      x-stainless-os:
+      - Windows
+      x-stainless-package-version:
+      - 2.49.0
+      x-stainless-raw-response:
+      - 'true'
+      x-stainless-retry-count:
+      - '0'
+      x-stainless-runtime:
+      - CPython
+      x-stainless-runtime-version:
+      - 3.14.3
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAA/+JSgAEuAAAAAP//4kIwAQAAAP//QmICAAAA//98Ustu20AM/BVjz3JqKQ87uhUp
+        iqYoemkPBaJgsZZoic0+hOXKsWHo38u1Ildu3eoiYDg7HA55EFiJXNRg5+lydbe8uU1v0/ljm95/
+        /Pz9wX378d59Ss36y+tKJMKtf0IZmF42KlyVzrQaAjrLpdKDCsBSv1USYVwFOqo7V2t4V4Mxan49
+        T7P1HAM/ar3bYgWeKR8A2ke78Yph2lMAIzdoa/CtR8stbac1V8BvsQQZMD4asLJxDJHIn3gWW8FO
+        5ItEaFez+ppGFoshNZJdEvvNBQXXciurAm5B/qNqgEjVIPKD8E7zXygipKBsdF86GyB6E4fCzmZF
+        DNEDFSKfPT0nA0RoUCsvg4vw0cpQqNBzlM5HuBAPjcfYswE/++q0soV446mRNHkLu1J3Fchj7bzf
+        WLpgxaCVe1BHsWyRpiOsdid40iOyPYdj6z8KHmre+AgWtuckPGw6UnrMeoiRnw5A3z8nohuD5K2Y
+        NnAgL2B5O+lqFZMcL+mERzi4oPQJyZZ3kUkc+OJqwV+WMYAk13v3IvKN0gTJubysICjUFPuWqmyg
+        OqnxiRwR+eoxwBRWXYVuCsQTnQD94GKq3bUUeGgj0W7Ag+UL/cvoBc6b1yl1cX+TXJYbE6Izfnqd
+        9Rfym5o7bWM6Expex3+m7vv+FwAAAP//AwBVfj0/OwQAAA==
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      cf-ray:
+      - a2b3436a68f333a6-EWR
+      connection:
+      - keep-alive
+      content-encoding:
+      - gzip
+      content-type:
+      - application/json
+      date:
+      - Fri, 14 Aug 2026 22:05:51 GMT
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      server:
+      - cloudflare
+      transfer-encoding:
+      - chunked
+      x-content-type-options:
+      - nosniff
+      x-generation-id:
+      - gen-1786745151-Ip19FJTCoSXAoH1mbLw8
+    status:
+      code: 200
+      message: OK
+version: 1
