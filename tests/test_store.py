@@ -1,7 +1,8 @@
-"""Tests for the SQLite trace store (WAL mode, single-writer serialization)."""
+"""Tests for the SQLite trace store (WAL mode, lock-serialized writes)."""
 
 from __future__ import annotations
 
+import sqlite3
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,6 +12,7 @@ import pytest
 from imdb_chatbot.schemas import (
     ChangeRecord,
     MovieRecommendation,
+    MovieRecord,
     ParsedQuery,
     RecommendationSet,
     ScoredMovie,
@@ -99,10 +101,11 @@ def test_cache_round_trips(store: TraceStore) -> None:
 
 
 def test_concurrent_writes_are_serialized(store: TraceStore) -> None:
-    """~20 threads write distinct traces simultaneously; all must land intact.
+    """~20 real threads write distinct traces simultaneously; all must land intact.
 
-    This proves the single-writer queue serializes concurrent writes without
-    "database is locked" errors or corruption.
+    Attacks: "the write lock serializes concurrent writers" - broken if the
+    shared write connection ever sees interleaved statements ("database is
+    locked", lost rows, or a torn commit).
     """
     n = 20
     errors: list[BaseException] = []
@@ -131,3 +134,93 @@ def test_concurrent_writes_are_serialized(store: TraceStore) -> None:
     with store._read_lock:
         count = store._read_conn.execute("SELECT COUNT(*) FROM traces;").fetchone()[0]
     assert count == n
+
+
+def test_failed_write_raises_and_next_write_still_lands(store: TraceStore) -> None:
+    """A write either commits or raises; it never wedges the store.
+
+    Attacks: "a raising write cannot leave the store hung" - the pre-#73 writer
+    thread had an unbounded ``done.wait()``, so a dead writer blocked every later
+    caller forever. Inject a write that fails mid-transaction, then prove (a) the
+    caller got the exception, (b) the partial row was rolled back, (c) a good
+    write completes within a bounded wait, (d) the lock is not held.
+    """
+
+    class Boom(RuntimeError):
+        pass
+
+    def _partial_then_fail(conn: sqlite3.Connection) -> None:
+        conn.execute("INSERT INTO cache (key, value) VALUES ('half', x'00')")
+        raise Boom
+
+    with pytest.raises(Boom):
+        store._submit(_partial_then_fail)
+    with pytest.raises(sqlite3.OperationalError):
+        store._submit(lambda conn: conn.execute("INSERT INTO no_such_table VALUES (1)"))
+    assert store.cache_get("half") is None, "partial write was not rolled back"
+
+    landed = threading.Event()
+
+    def _good() -> None:
+        store.cache_put("after", b"ok")
+        landed.set()
+
+    t = threading.Thread(target=_good, daemon=True)
+    t.start()
+    assert landed.wait(timeout=5), "write after a failed write hung"
+    assert store.cache_get("after") == b"ok"
+    assert not store._write_lock.locked()
+
+
+def test_read_connection_has_busy_timeout(store: TraceStore) -> None:
+    """Attacks: "both connections are configured alike" - pre-#73 the read
+    connection skipped ``_configure`` and so had ``busy_timeout=0``."""
+    with store._read_lock:
+        timeout = store._read_conn.execute("PRAGMA busy_timeout;").fetchone()[0]
+    assert timeout == store._busy_timeout_ms
+
+
+def test_ingest_writes_while_build_reads_under_wal(tmp_path: Path) -> None:
+    """A second handle on the same file (as an index build would open) iterates
+    the catalog while a real thread ingests movies through ``write_movie``.
+
+    Attacks: "WAL lets one process read the corpus while another writes it" -
+    broken by "database is locked" on either side or by a reader seeing a torn
+    row. Two ``TraceStore`` instances stand in for the two processes.
+    """
+    path = tmp_path / "corpus.sqlite"
+    n = 200
+    errors: list[BaseException] = []
+
+    def _movie(i: int) -> MovieRecord:
+        return MovieRecord(
+            tmdb_id=i,
+            title=f"Movie {i}",
+            year=2000,
+            genres=["Drama"],
+            director="D",
+            cast=["A"],
+            plot="p",
+            regions=["US"],
+            vote_count=1,
+        )
+
+    def ingest() -> None:
+        try:
+            with TraceStore(path) as writer:
+                for i in range(1, n + 1):
+                    writer.write_movie(_movie(i))
+        except BaseException as exc:  # noqa: BLE001 - collected for assertion
+            errors.append(exc)
+
+    with TraceStore(path) as reader:
+        t = threading.Thread(target=ingest)
+        t.start()
+        seen: list[int] = []
+        while t.is_alive():
+            seen.append(len(reader.read_all_movies()))
+        t.join(timeout=30)
+        assert not t.is_alive(), "ingest hung"
+        assert not errors, f"ingest raised: {errors!r}"
+        assert reader.count_movies() == n
+        assert seen == sorted(seen), "reader saw the catalog shrink mid-ingest"

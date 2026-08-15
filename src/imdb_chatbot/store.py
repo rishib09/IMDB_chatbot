@@ -11,11 +11,10 @@ Design constraints (from ticket #12):
 
 - The database runs in WAL journal mode with a sane ``busy_timeout`` so readers
   never block the single writer and vice versa.
-- ALL writes are funneled through ONE dedicated writer thread that owns its own
-  connection. Public write methods enqueue a job and block until the writer has
-  committed it, so callers get deterministic completion. This serializes every
-  write and sidesteps SQLite's "database is locked" failure mode under
-  concurrency without sprinkling retries everywhere.
+- ALL writes go through ONE write connection guarded by a ``threading.Lock``
+  (ticket #73). Each public write method runs its statement and commits inside
+  the lock, so writes are serialized and a write either commits or raises -
+  there is no queue, no writer thread, and no unbounded wait.
 - Reads use a separate, read-only connection (WAL allows concurrent reads).
 
 Rich objects (``TurnTrace``, ``ChangeRecord``) are stored as JSON via
@@ -27,11 +26,9 @@ from __future__ import annotations
 
 import gzip
 import json
-import queue
 import sqlite3
 import threading
 from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Self
@@ -78,87 +75,47 @@ CREATE INDEX IF NOT EXISTS idx_traces_ts ON traces (ts);
 """
 
 
-@dataclass
-class _WriteJob:
-    """A unit of work handed to the writer thread.
-
-    ``fn`` receives the writer's owned connection and performs the mutation.
-    ``done`` is set once the work has committed (or raised); ``error`` carries
-    any exception back to the caller so it can be re-raised there.
-    """
-
-    fn: Callable[[sqlite3.Connection], None]
-    done: threading.Event = field(default_factory=threading.Event)
-    error: BaseException | None = None
-
-
-_STOP = object()  # sentinel enqueued by close() to stop the writer loop
-
-
 class TraceStore:
     """A single-writer, WAL-mode SQLite store for traces and the change ledger."""
 
     def __init__(self, path: str | Path, *, busy_timeout_ms: int = 5000) -> None:
         self.path = str(path)
         self._busy_timeout_ms = busy_timeout_ms
-        self._queue: queue.Queue[Any] = queue.Queue()
         self._closed = False
+        # check_same_thread=False + a lock per connection lets any caller thread
+        # read or write; WAL keeps readers off the writer's back.
+        self._write_lock = threading.Lock()
+        self._write_conn = self._connect()
         self._read_lock = threading.Lock()
-
-        # Dedicated writer thread owns its own connection for its whole life.
-        self._writer = threading.Thread(
-            target=self._writer_loop, name="tracestore-writer", daemon=True
-        )
-        self._writer.start()
-
-        # Separate read connection. check_same_thread=False + a lock lets reads
-        # come from any caller thread while WAL keeps them off the writer's back.
-        self._read_conn = sqlite3.connect(self.path, check_same_thread=False)
-        self._read_conn.row_factory = sqlite3.Row
-
+        self._read_conn = self._connect()
         self.init_schema()
 
     # -- connection setup ------------------------------------------------------
 
-    def _configure(self, conn: sqlite3.Connection) -> None:
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.path, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA synchronous=NORMAL;")
         conn.execute(f"PRAGMA busy_timeout={self._busy_timeout_ms};")
         conn.execute("PRAGMA foreign_keys=ON;")
-
-    # -- writer thread ---------------------------------------------------------
-
-    def _writer_loop(self) -> None:
-        conn = sqlite3.connect(self.path, check_same_thread=False)
-        self._configure(conn)
-        try:
-            while True:
-                job = self._queue.get()
-                if job is _STOP:
-                    break
-                try:
-                    job.fn(conn)
-                    conn.commit()
-                except BaseException as exc:  # noqa: BLE001 - relayed to caller
-                    try:
-                        conn.rollback()
-                    except sqlite3.Error:
-                        pass
-                    job.error = exc
-                finally:
-                    job.done.set()
-        finally:
-            conn.close()
+        return conn
 
     def _submit(self, fn: Callable[[sqlite3.Connection], None]) -> None:
-        """Enqueue a write and block until the writer thread has committed it."""
+        """Run ``fn`` on the write connection under the write lock and commit.
+
+        Either commits or raises to the caller (after rollback); the lock is
+        always released, so a failed write never blocks the next one.
+        """
         if self._closed:
             raise RuntimeError("TraceStore is closed")
-        job = _WriteJob(fn=fn)
-        self._queue.put(job)
-        job.done.wait()
-        if job.error is not None:
-            raise job.error
+        with self._write_lock:
+            try:
+                fn(self._write_conn)
+                self._write_conn.commit()
+            except BaseException:
+                self._write_conn.rollback()
+                raise
 
     # -- schema ----------------------------------------------------------------
 
@@ -319,12 +276,12 @@ class TraceStore:
     # -- lifecycle -------------------------------------------------------------
 
     def close(self) -> None:
-        """Stop the writer thread and close all connections."""
+        """Close both connections."""
         if self._closed:
             return
         self._closed = True
-        self._queue.put(_STOP)
-        self._writer.join(timeout=10)
+        with self._write_lock:
+            self._write_conn.close()
         with self._read_lock:
             self._read_conn.close()
 
@@ -364,7 +321,7 @@ class RawArchive:
       the older spec instead of paying another full sweep.
 
     Single-threaded by design (one build-time writer), so unlike ``TraceStore``
-    it needs no writer thread. Every :meth:`put` commits, which is exactly what
+    it needs no write lock. Every :meth:`put` commits, which is exactly what
     makes a killed backfill resumable.
     """
 
