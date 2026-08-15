@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import json
 from datetime import date
+from functools import partial
 from pathlib import Path
+
+import pytest
 
 from imdb_chatbot.guards import (
     BudgetTracker,
@@ -66,6 +69,41 @@ def test_context_cap_truncates() -> None:
     result = enforce_context_cap(text)
     assert result.truncated is True
     assert count_tokens(result.text) <= 2000
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "don't stop",
+        "Wait, what?! Yes... no; maybe: \"quoted\" (parens) - it's 'fine'.",
+        "café crème brûlée naïve façade",
+        "千と千尋の神隠し を 見たい です",
+        "🎬 popcorn 🍿 & 🎥 movies!! 👍🏽",
+        "two  spaces\tand\nnewlines\r\n  here   ",
+        "  leading and trailing  ",
+        "",
+    ],
+)
+@pytest.mark.parametrize("cap", [0, 1, 2, 3, 5, 1000])
+def test_truncation_preserves_original_characters(text: str, cap: int) -> None:
+    """Attacks: "truncation preserves the original characters".
+
+    The old implementation re-joined regex tokens with spaces, so "don't stop"
+    came back as "don ' t stop" and every comma/period got space-padded. The
+    invariant is that the output is a character-for-character prefix of the
+    input, at most ``cap`` tokens long, and byte-identical when it already fits.
+    """
+    n = count_tokens(text)
+    for cap_fn in (
+        partial(enforce_input_caps, max_chars=10_000, max_tokens=cap),
+        partial(enforce_context_cap, max_tokens=cap),
+    ):
+        result = cap_fn(text)
+        assert text.startswith(result.text)
+        assert count_tokens(result.text) <= cap
+        assert result.truncated is (n > cap)
+        if n <= cap:
+            assert result.text == text
 
 
 def test_llm_call_params_force_max_tokens() -> None:
