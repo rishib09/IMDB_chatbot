@@ -21,6 +21,7 @@ from collections.abc import Iterable
 from pydantic import BaseModel, Field
 
 from ..graph import GraphModels, RetrieverFn, TurnResult, UsageMeter, run_turn
+from ..graph.normalize import CorpusVocab
 from ..schemas import ParsedQuery, TurnState, index_by_title_year
 from ..store import TraceStore
 
@@ -230,6 +231,7 @@ def run_session_turn(
     versions: dict[str, str] | None = None,
     usage: UsageMeter | None = None,
     pricing: dict[str, dict[str, float]] | None = None,
+    vocab: CorpusVocab | None = None,
 ) -> TurnResult:
     """Run one turn with session memory applied, then update the session.
 
@@ -253,6 +255,7 @@ def run_session_turn(
         versions=versions,
         usage=usage,
         pricing=pricing,
+        vocab=vocab,
     )
     update_state_from_result(conversation, result)
     return result

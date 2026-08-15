@@ -31,13 +31,15 @@ FUZZY_CUTOFF = 0.8
 LOOKUP_CACHE_SIZE = 512
 
 
-def build_title_lookup(movies: Iterable[Any]) -> TitleLookup:
+def build_title_lookup(movies: Iterable[Any], *, substring: bool = True) -> TitleLookup:
     """Build a tolerant title -> MovieRecord lookup over the corpus.
 
     Three tiers, most confident first:
 
     1. exact normalized match;
-    2. substring match either direction (minimum 4 chars, to avoid noise);
+    2. substring match either direction (minimum 4 chars, to avoid noise) -
+       ``substring=False`` skips this tier, for callers testing whether a phrase
+       IS a title rather than whether it mentions one (#84);
     3. a fuzzy match, which is what makes a MISSPELLED title resolve at all -
        "intersteller" reaches "interstellar" instead of the honest-but-useless
        "couldn't find it". ``FUZZY_CUTOFF`` is deliberately high: at this point
@@ -65,7 +67,7 @@ def build_title_lookup(movies: Iterable[Any]) -> TitleLookup:
         keys = [
             k
             for k in index
-            if (len(key) >= 4 and key in k) or (len(k) >= 4 and k in key)
+            if substring and ((len(key) >= 4 and key in k) or (len(k) >= 4 and k in key))
         ] or get_close_matches(key, index, n=1, cutoff=FUZZY_CUTOFF)
         return max((m for k in keys for m in index[k]), key=_vote, default=None)
 
