@@ -22,10 +22,12 @@ the query fails - the live risk once the embedder is a hosted API (ticket #76) -
 the turn runs sparse-only and still returns filtered, deterministic results. It
 never raises.
 
-An in-process LRU cache keyed by ``(hash(rewritten_query), index_version,
-hash(frozen_filters))`` short-circuits repeated identical calls. There is no TTL:
-the index version is part of the key, so a new index invalidates the cache
-naturally.
+An in-process LRU cache keyed by ``(rewritten_query, index_version,
+frozen_filters)`` short-circuits repeated identical calls. The key holds the
+raw values (no ``hash()``: that is ``PYTHONHASHSEED``-dependent) and the filters
+part is derived from ``ParsedQuery.model_dump()`` so a new field can never be
+silently left out of it. There is no TTL: the index version is part of the key,
+so a new index invalidates the cache naturally.
 """
 
 from __future__ import annotations
@@ -82,25 +84,21 @@ def build_movie_map(store: TraceStore) -> dict[int, MovieRecord]:
     return {m.tmdb_id: m for m in store.read_all_movies()}
 
 
-def _freeze_filters(parsed: ParsedQuery, shown_movies: frozenset[int]) -> tuple:
+def cache_key(
+    rewritten_query: str, version: str, parsed: ParsedQuery, shown_movies: frozenset[int]
+) -> tuple:
     """A hashable, order-stable snapshot of everything that changes the result.
 
-    Lists are sorted into tuples so that filter sets that differ only in ordering
-    map to the same cache entry.
+    Derived from ``model_dump()`` - every ``ParsedQuery`` field, present and
+    future, is in the key - and free of ``hash()``, so it is identical across
+    processes. Lists are sorted into tuples so that filter sets that differ only
+    in ordering map to the same cache entry.
     """
-    return (
-        tuple(sorted(parsed.genres)),
-        parsed.similar_to,
-        parsed.director,
-        parsed.actor,
-        tuple(sorted(parsed.exclude_actors)),
-        tuple(sorted(parsed.exclude_genres)),
-        parsed.min_year,
-        parsed.max_year,
-        parsed.min_rating,
-        parsed.region,
-        tuple(sorted(shown_movies)),
+    filters = tuple(
+        (name, tuple(sorted(value)) if isinstance(value, list) else value)
+        for name, value in parsed.model_dump().items()
     )
+    return (rewritten_query, version, filters, tuple(sorted(shown_movies)))
 
 
 def _effective_rating(movie: MovieRecord, region: str | None) -> float | None:
@@ -302,11 +300,7 @@ class HybridRetriever:
         parsed = parsed or ParsedQuery()
         shown = frozenset(shown_movies or ())
 
-        key = (
-            hash(rewritten_query),
-            self.version,
-            hash(_freeze_filters(parsed, shown)),
-        )
+        key = cache_key(rewritten_query, self.version, parsed, shown)
         cached = self._cache.get(key)
         if cached is not None:
             self._cache.move_to_end(key)
@@ -360,26 +354,30 @@ class HybridRetriever:
                 continue
             survivors.append((tmdb_id, fused.get(tmdb_id, 0.0)))
 
+        def votes(tmdb_id: int) -> int:
+            return self.movies_by_id[tmdb_id].vote_count or 0
+
         # Stage 1 - relevance gate (ticket #52): order survivors by RRF (highest
-        # relevance first, ties by tmdb_id) and keep the top RERANK_POOL as the
-        # eligible pool. A weakly-relevant film never enters this pool.
-        pool = heapq.nsmallest(self.rerank_pool, survivors, key=_best_first)
+        # relevance first) and keep the top RERANK_POOL as the eligible pool. A
+        # weakly-relevant film never enters this pool. RRF ties - every person
+        # film injected above that semantic search missed sits at 0.0 - break on
+        # vote_count, then tmdb_id, so the cut never drops a mainstream title
+        # for one with a smaller id (ticket #70).
+        pool = heapq.nsmallest(
+            self.rerank_pool,
+            survivors,
+            key=lambda item: (-item[1], -votes(item[0]), item[0]),
+        )
 
         # Stage 2 - within the eligible pool, vote_count is the primary ranker
         # (mainstream titles lead; low-vote featurettes/documentaries sink).
-        # Ties keep the RRF order (the pool position), then tmdb_id, so the sort
-        # stays deterministic. Cap to FINAL_K; if fewer are eligible, return all.
-        ranked = sorted(
-            enumerate(pool),
-            key=lambda item: (
-                -(self.movies_by_id[item[1][0]].vote_count or 0),
-                item[0],
-                item[1][0],
-            ),
-        )
+        # ``sorted`` is stable and the pool is already in stage-1 order, so ties
+        # keep that order with no explicit tie-break. Cap to FINAL_K; if fewer
+        # are eligible, return all.
+        ranked = sorted(pool, key=lambda item: -votes(item[0]))
 
         out: list[ScoredMovie] = []
-        for rank, (_, (tmdb_id, rrf_score)) in enumerate(ranked[: self.final_k], start=1):
+        for rank, (tmdb_id, rrf_score) in enumerate(ranked[: self.final_k], start=1):
             movie = self.movies_by_id[tmdb_id]
             out.append(
                 ScoredMovie(
