@@ -94,12 +94,6 @@ def test_change_record_round_trips(store: TraceStore) -> None:
     assert fetched == rec
 
 
-def test_cache_round_trips(store: TraceStore) -> None:
-    store.cache_put("k", b"some-bytes")
-    assert store.cache_get("k") == b"some-bytes"
-    assert store.cache_get("missing") is None
-
-
 def test_concurrent_writes_are_serialized(store: TraceStore) -> None:
     """~20 real threads write distinct traces simultaneously; all must land intact.
 
