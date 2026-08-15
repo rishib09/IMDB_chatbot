@@ -202,6 +202,19 @@ def test_replace_switches_to_a_new_topic(retry_scenario) -> None:
     retry_scenario(scenario)
 
 
+def test_failed_turn_does_not_poison_the_next_search(retry_scenario) -> None:
+    # Ticket #85 reproduction: a turn whose extraction yields an unsatisfiable
+    # constraint (region='korean' on main, see #84) must not be promoted into a
+    # standing constraint that starves every later search in the session.
+    def scenario(handler) -> None:
+        first = handler("a gritty korean revenge thriller")
+
+        second = handler("recommend some christopher nolan movies")
+
+        assert second.telemetry is not None, _describe(first) + " || " + _describe(second)
+        assert second.rec.picks, _describe(first) + " || " + _describe(second)
+        titles = {p.title for p in second.rec.picks}
+        assert titles & NOLAN_FILMS, _describe(first) + " || " + _describe(second)
 def test_nationality_phrased_search_returns_picks(retry_scenario) -> None:
     # Ticket #84: the extractor emits region='korean' (not 'KR'), plus a
     # non-genre 'revenge' and a non-title similar_to; unnormalized, that

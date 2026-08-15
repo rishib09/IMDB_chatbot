@@ -5,7 +5,9 @@ Topology (deterministic spine, stochastic leaves):
     START -> rewrite -> extract
     extract  --(extract_failed and extract_retries < 2)--> extract   (JSON retry)
              --(else)------------------------------------> retrieve
-    retrieve -> filter
+    retrieve -> filter   (retrieve retries once without the session's standing
+                          constraints if they emptied the pool - shows up in the
+                          path as ``retrieve -> relax_standing -> retrieve``, #85)
     filter   --(len(candidates) == 0)--> fallback
              --(else)-----------------> generate
     generate -> validate
@@ -232,15 +234,29 @@ def _session_merged_parsed(state: TurnState) -> ParsedQuery:
 
 
 def _make_retrieve(retriever: RetrieverFn, collector: TraceCollector):
+    def fetch(state: TurnState, parsed: ParsedQuery) -> list[ScoredMovie]:
+        retrieved = list(retriever(_effective_query(state), parsed))
+        # Session no-repeat guarantee (ticket #21): drop anything already shown.
+        shown = set(state.shown_movies)
+        return [m for m in retrieved if m.tmdb_id not in shown]
+
     @traced("retrieve", collector)
     def retrieve(state: TurnState) -> dict:
         parsed = _session_merged_parsed(state)
-        retrieved = list(retriever(_effective_query(state), parsed))
-        # Session no-repeat guarantee (ticket #21): drop anything already shown.
-        if state.shown_movies:
-            shown = set(state.shown_movies)
-            retrieved = [m for m in retrieved if m.tmdb_id not in shown]
-        return {"retrieved": retrieved, "parsed": parsed}
+        retrieved = fetch(state, parsed)
+        updates: dict = {}
+        if not retrieved and state.session_standing:
+            # Standing constraints must be EARNED (ticket #85): if the inherited
+            # ones empty the pool, drop them and retry once with just this turn's
+            # parse (session exclusions kept), recording the relaxation in the path.
+            own = _session_merged_parsed(state.model_copy(update={"session_standing": {}}))
+            if own != parsed:
+                parsed, retrieved = own, fetch(state, own)
+                updates = {
+                    "session_standing": {},
+                    "path_taken": [*state.path_taken, "retrieve", "relax_standing"],
+                }
+        return {**updates, "retrieved": retrieved, "parsed": parsed}
 
     return retrieve
 
