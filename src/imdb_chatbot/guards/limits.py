@@ -15,6 +15,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from functools import partial
+from itertools import islice
 
 from ..config import load_limits_config
 
@@ -64,8 +65,17 @@ def count_tokens(text: str) -> int:
     return len(_TOKEN_RE.findall(text))
 
 
-def _tokens(text: str) -> list[str]:
-    return _TOKEN_RE.findall(text)
+def _truncate_to_tokens(text: str, max_tokens: int) -> tuple[str, int]:
+    """``text`` cut at the end of its ``max_tokens``-th token, plus the tokens kept.
+
+    Slices the ORIGINAL string at a match offset, so every kept character is
+    byte-identical to the input (#71: re-joining tokens turned "don't" into
+    "don ' t"). Only ``max_tokens + 1`` matches are ever inspected.
+    """
+    ends = [m.end() for m in islice(_TOKEN_RE.finditer(text), max_tokens + 1)]
+    if len(ends) <= max_tokens:
+        return text, len(ends)
+    return (text[: ends[max_tokens - 1]] if max_tokens else ""), max_tokens
 
 
 @dataclass
@@ -95,30 +105,17 @@ def enforce_input_caps(
         max_tokens if max_tokens is not None else _per_query("input_max_tokens", DEFAULT_INPUT_MAX_TOKENS)
     )
 
-    truncated = False
-    result = text
-
-    # Char cap first (UI-facing hard bound).
-    if len(result) > max_chars:
-        result = result[:max_chars]
-        truncated = True
-
-    # Token cap second (authoritative server-side bound). Rebuild from the kept
-    # tokens so we never emit a dangling partial token.
-    toks = _tokens(result)
-    if len(toks) > max_tokens:
-        result = " ".join(toks[:max_tokens])
-        truncated = True
-
-    if not truncated:
-        return CapResult(text=result)
-
-    kept = f"{len(_tokens(result))} tokens"
+    # Char cap first (UI-facing hard bound), token cap second (authoritative
+    # server-side bound). Both slice the original, so ``result`` is a prefix of
+    # ``text`` and equality means nothing was cut.
+    result, kept = _truncate_to_tokens(text[:max_chars], max_tokens)
+    if result == text:
+        return CapResult(text=text)
     return CapResult(
         text=result,
         truncated=True,
         flags=[INPUT_CAP_FLAG],
-        notice=_TRUNCATE_NOTICE.format(kept=kept),
+        notice=_TRUNCATE_NOTICE.format(kept=f"{kept} tokens"),
     )
 
 
@@ -127,11 +124,11 @@ def enforce_context_cap(text: str, *, max_tokens: int | None = None) -> CapResul
     max_tokens = (
         max_tokens if max_tokens is not None else _per_query("context_max_tokens", DEFAULT_CONTEXT_MAX_TOKENS)
     )
-    toks = _tokens(text)
-    if len(toks) <= max_tokens:
+    result, _ = _truncate_to_tokens(text, max_tokens)
+    if result == text:
         return CapResult(text=text)
     return CapResult(
-        text=" ".join(toks[:max_tokens]),
+        text=result,
         truncated=True,
         flags=[INPUT_CAP_FLAG],
         notice="Context was trimmed to fit the model's window.",
