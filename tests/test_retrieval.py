@@ -15,6 +15,9 @@ Tests that need ``faiss`` are skipped when it is not installed; they run on CI.
 from __future__ import annotations
 
 import importlib.util
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -187,20 +190,26 @@ def _corpus(with_votes: bool = False) -> list[MovieRecord]:
     return movies
 
 
-def _voted_retriever(tmp_path: Path, *, rerank_pool: int = 20) -> HybridRetriever:
-    """A retriever over the corpus WITH vote_counts, to exercise the #52 re-rank."""
-    store = TraceStore(tmp_path / "voted.sqlite")
-    for movie in _corpus(with_votes=True):
+def _build_retriever(
+    tmp_path: Path, movies: list[MovieRecord], name: str, **kwargs: object
+) -> HybridRetriever:
+    """A retriever (fresh cache) over a freshly built stub index of ``movies``."""
+    store = TraceStore(tmp_path / f"{name}.sqlite")
+    for movie in movies:
         store.write_movie(movie)
     embedder = StubEmbedder(dim=16)
     result = build_index(
-        store, embedder, dataset_version="t52", out_root=tmp_path / "vindex",
+        store, embedder, dataset_version=name, out_root=tmp_path / f"{name}_index",
         cache=None, flip_pointer=False,
     )
-    loaded = load_index(result.out_dir)
-    r = HybridRetriever.from_store(loaded, embedder, store, rerank_pool=rerank_pool)
+    r = HybridRetriever.from_store(load_index(result.out_dir), embedder, store, **kwargs)
     store.close()
     return r
+
+
+def _voted_retriever(tmp_path: Path, *, rerank_pool: int = 20) -> HybridRetriever:
+    """A retriever over the corpus WITH vote_counts, to exercise the #52 re-rank."""
+    return _build_retriever(tmp_path, _corpus(with_votes=True), "voted", rerank_pool=rerank_pool)
 
 
 @pytest.fixture()
@@ -227,22 +236,7 @@ def retriever(tmp_path: Path):
 
 def _new_retriever(tmp_path: Path) -> HybridRetriever:
     """Build a second, independent retriever (fresh cache) over the same corpus."""
-    store = TraceStore(tmp_path / "corpus2.sqlite")
-    for movie in _corpus():
-        store.write_movie(movie)
-    embedder = StubEmbedder(dim=16)
-    result = build_index(
-        store,
-        embedder,
-        dataset_version="t16",
-        out_root=tmp_path / "index2",
-        cache=None,
-        flip_pointer=False,
-    )
-    loaded = load_index(result.out_dir)
-    r = HybridRetriever.from_store(loaded, embedder, store)
-    store.close()
-    return r
+    return _build_retriever(tmp_path, _corpus(), "corpus2")
 
 
 QUERY = "detective murder mystery thriller at night"
@@ -524,6 +518,101 @@ def test_cache_key_distinguishes_filters(retriever: HybridRetriever) -> None:
     # A different filter set is a genuine miss -> pipeline runs again.
     retriever.retrieve(QUERY, ParsedQuery(region="IN"))
     assert retriever.search_calls == 2
+
+
+# -- retrieval bug cluster (ticket #70): one adversary per defect ------------
+
+
+@requires_faiss
+def test_every_candidate_reaches_the_vote_count_ranker(tmp_path: Path) -> None:
+    """Attacks: every candidate reaches the vote_count ranker.
+
+    Broken by RRF-score ties: person films injected by the person index but
+    missed by semantic search all tie at 0.0, and a tie broken by tmdb_id cut
+    the highest-vote film when it also had the largest id (Oppenheimer vs
+    Memento). Here ``dense_k = sparse_k = 1`` so almost every film is a 0.0 tie,
+    ``rerank_pool = 2`` forces a cut, and Dir Z's most-voted film has the
+    largest id of the three.
+    """
+    movies = _corpus(with_votes=True)
+    for movie in movies:
+        if movie.tmdb_id in (1, 3, 5):
+            movie.director = "Dir Z"
+            movie.vote_count = {1: 100, 3: 200, 5: 900}[movie.tmdb_id]
+    r = _build_retriever(tmp_path, movies, "ties", dense_k=1, sparse_k=1, rerank_pool=2)
+    out = r.retrieve("sunny feel-good comedy wedding", ParsedQuery(director="Dir Z"))
+    assert [s.tmdb_id for s in out] == [5, 3]
+
+
+@requires_faiss
+def test_cache_key_distinguishes_any_two_different_queries(retriever: HybridRetriever) -> None:
+    """Attacks: the cache key distinguishes any two different queries.
+
+    Broken by adding a ``ParsedQuery`` field: a hand-listed key silently omits
+    it, so two queries differing only in that field share one cache entry. A
+    subclass with an extra field is exactly that schema growth.
+    """
+
+    class Grown(ParsedQuery):
+        mood: str | None = None
+
+    retriever.retrieve(QUERY, Grown(mood="tense"))
+    retriever.retrieve(QUERY, Grown(mood="cosy"))
+    assert retriever.search_calls == 2, "queries differing only in a new field collided"
+
+
+def test_cache_key_is_stable_across_processes() -> None:
+    """Attacks: the cache key is stable across processes.
+
+    Broken by restarting Python: ``hash(str)`` is ``PYTHONHASHSEED``-dependent,
+    so a key built from it differs between runs. Two interpreters with different
+    seeds must print the same key - and the attack is live, because ``hash`` of
+    the same string does differ between them.
+    """
+    code = (
+        "from imdb_chatbot.retrieval.retrieve import cache_key\n"
+        "from imdb_chatbot.schemas import ParsedQuery\n"
+        "print(hash('nolan'), cache_key('nolan', 'v1', ParsedQuery(director='Nolan',"
+        " genres=['b', 'a']), frozenset({7, 3})), sep='\\n')"
+    )
+    runs = []
+    for seed in ("1", "2"):
+        env = {**os.environ, "PYTHONHASHSEED": seed}
+        proc = subprocess.run(
+            [sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True
+        )
+        runs.append(proc.stdout.splitlines())
+    (hash_a, key_a), (hash_b, key_b) = runs
+    assert hash_a != hash_b, "attack must be live: hash() should differ across seeds"
+    assert key_a == key_b
+
+
+@requires_faiss
+def test_vote_count_ties_keep_rrf_order(tmp_path: Path) -> None:
+    """Attacks: vote_count ties keep the RRF (relevance) order.
+
+    This is what the deleted ``rrf_pool_index`` tie-break claimed to guarantee;
+    ``sorted`` is stable over a pool already in RRF order, so it was unreachable.
+    All-equal votes must reproduce the no-votes ordering exactly - and that
+    ordering is not tmdb_id-ascending, so a tmdb_id fallback would be caught.
+    """
+    movies = _corpus()
+    for movie in movies:
+        movie.vote_count = 100
+    tied = _build_retriever(tmp_path, movies, "tied").retrieve(QUERY, ParsedQuery())
+    unvoted = _build_retriever(tmp_path, _corpus(), "unvoted").retrieve(QUERY, ParsedQuery())
+    ids = [s.tmdb_id for s in tied]
+    assert ids == [s.tmdb_id for s in unvoted]
+    assert ids != sorted(ids)
+
+
+@pytest.mark.live
+def test_live_director_query_surfaces_mainstream_films(live_resources) -> None:
+    """Real 46k index, no LLM: a Nolan director query returns his mainstream films."""
+    out = live_resources.retriever("Christopher Nolan movies", ParsedQuery(director="Christopher Nolan"))
+    titles = {s.title for s in out}
+    assert len(out) == 5
+    assert {"Inception", "Interstellar", "The Dark Knight"} <= titles, titles
 
 
 # -- determinism --------------------------------------------------------------
