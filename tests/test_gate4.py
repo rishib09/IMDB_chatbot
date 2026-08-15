@@ -188,7 +188,7 @@ def test_section_7_5_worked_example_regen_then_clean() -> None:
     gen_calls = {"n": 0}
     models = _worked_example_models(gen_calls)
 
-    def retriever(query: str, parsed: ParsedQuery):
+    def retriever(query: str, parsed: ParsedQuery, shown_movies=()):
         return [_candidate()]
 
     result = run_turn(
@@ -244,7 +244,7 @@ def test_gate4_exhausts_retries_then_fallback() -> None:
 
     result = run_turn(
         TurnState(trace_id="t", session_id="s", raw_query="no cruise please"),
-        retriever=lambda q, p: [_candidate()],
+        retriever=lambda q, p, shown=(): [_candidate()],
         models=models,
     )
 

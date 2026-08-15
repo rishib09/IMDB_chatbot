@@ -203,13 +203,16 @@ def build_models() -> GraphModels:
     return GraphModels(rewrite=fake_rewrite, extract=fake_extract, generate=fake_generate)
 
 
-def stub_retriever(query: str, parsed: ParsedQuery) -> list[ScoredMovie]:
+def stub_retriever(
+    query: str, parsed: ParsedQuery, shown_movies: Sequence[int] = ()
+) -> list[ScoredMovie]:
     """Deterministic retriever over ``CATALOG`` honouring the parsed constraints.
 
     Keeps a film iff it matches a requested genre (or none were requested) and is
     not excluded by genre or by cast. The graph's ``retrieve`` node has already
-    folded the session's standing exclusions into ``parsed`` and drops
-    ``shown_movies`` afterwards, so this stub only enforces the parse it is given.
+    folded the session's standing exclusions into ``parsed`` and still drops
+    ``shown_movies`` afterwards (this stub has no cap, so pre-cap exclusion is
+    moot), so it only enforces the parse it is given.
     """
     requested = {g.lower() for g in parsed.genres}
     exclude_genres = {g.lower() for g in parsed.exclude_genres}

@@ -44,7 +44,7 @@ def _recommendation() -> RecommendationSet:
 def _stub_retriever(candidates: list[ScoredMovie]):
     """A retriever callable that ignores the query and returns fixed candidates."""
 
-    def retrieve(query: str, parsed: ParsedQuery) -> list[ScoredMovie]:
+    def retrieve(query: str, parsed: ParsedQuery, shown_movies=()) -> list[ScoredMovie]:
         return list(candidates)
 
     return retrieve
@@ -373,7 +373,7 @@ def test_no_network_stub_retriever_only() -> None:
     """Guard: the whole graph runs with plain Python fakes - no live client."""
     seen = {"retriever": 0}
 
-    def counting_retriever(query: str, parsed: ParsedQuery) -> list[ScoredMovie]:
+    def counting_retriever(query: str, parsed: ParsedQuery, shown_movies=()) -> list[ScoredMovie]:
         seen["retriever"] += 1
         return [_candidate()]
 

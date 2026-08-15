@@ -169,8 +169,8 @@ def load_live_resources(
     store = TraceStore(Path(corpus_path or DEFAULT_CORPUS_PATH))
     hybrid = HybridRetriever.from_store(loaded, embedder, store)
 
-    def retriever(rewritten_query: str, parsed: ParsedQuery):
-        return hybrid.retrieve(rewritten_query, parsed)
+    def retriever(rewritten_query: str, parsed: ParsedQuery, shown_movies=()):
+        return hybrid.retrieve(rewritten_query, parsed, shown_movies)
 
     def models_factory(meter: UsageMeter | None) -> GraphModels:
         return build_models(cfg, meter=meter)
