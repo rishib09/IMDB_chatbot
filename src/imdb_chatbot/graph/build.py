@@ -23,7 +23,7 @@ every title exists among the candidates, and prose facts are grounded in the
 candidate records). A violation drives the regen edge (bounded), then fallback.
 
 Both stochastic dependencies are injected: ``retriever`` is a callable
-``(rewritten_query, parsed) -> list[ScoredMovie]`` and ``models`` is a
+``(rewritten_query, parsed, shown_movies) -> list[ScoredMovie]`` and ``models`` is a
 ``GraphModels`` bundle. Tests supply stubs/fakes so a turn runs with zero
 network I/O.
 """
@@ -44,8 +44,9 @@ from .normalize import CorpusVocab, normalize_parsed
 from .tracing import TraceCollector, serialize_trace, traced
 from .usage import UsageMeter
 
-# Injected retriever: (rewritten_query, parsed) -> ranked candidates.
-RetrieverFn = Callable[[str, ParsedQuery], Sequence[ScoredMovie]]
+# Injected retriever: (rewritten_query, parsed, shown_movies) -> ranked candidates.
+# ``shown_movies`` must be excluded BEFORE the retriever's top-K cap (ticket #88).
+RetrieverFn = Callable[[str, ParsedQuery, Sequence[int]], Sequence[ScoredMovie]]
 
 MAX_EXTRACT_RETRIES = 2
 MAX_GEN_RETRIES = 2
@@ -235,9 +236,12 @@ def _session_merged_parsed(state: TurnState) -> ParsedQuery:
 
 def _make_retrieve(retriever: RetrieverFn, collector: TraceCollector):
     def fetch(state: TurnState, parsed: ParsedQuery) -> list[ScoredMovie]:
-        retrieved = list(retriever(_effective_query(state), parsed))
-        # Session no-repeat guarantee (ticket #21): drop anything already shown.
+        # Session no-repeat guarantee (ticket #21): shown titles go INTO the
+        # retriever so they are excluded before its top-K cap and the slots
+        # refill with unseen candidates (ticket #88); the post-filter below is
+        # only a safety net for retrievers that ignore the argument.
         shown = set(state.shown_movies)
+        retrieved = list(retriever(_effective_query(state), parsed, state.shown_movies))
         return [m for m in retrieved if m.tmdb_id not in shown]
 
     @traced("retrieve", collector)

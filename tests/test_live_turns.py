@@ -167,10 +167,7 @@ def test_search_returns_on_topic_cards(retry_scenario) -> None:
 
 def test_refine_narrows_the_previous_results(retry_scenario) -> None:
     # Narrowing to a decade moves the eligible pool almost entirely off the
-    # titles already shown, so the refined turn has fresh candidates. (A
-    # narrowing that overlaps the shown top-5 - e.g. Nolan "after 2010" -
-    # strands today because the vote-count cap is applied before the
-    # shown-movies filter; see the live-tier notes in ticket #69.)
+    # titles already shown, so the refined turn has fresh candidates.
     def scenario(handler) -> None:
         first = handler("recommend some good sci-fi movies")
         assert first.rec.picks, _describe(first)
@@ -180,6 +177,29 @@ def test_refine_narrows_the_previous_results(retry_scenario) -> None:
         assert second.telemetry is not None, _describe(second)
         assert second.rec.picks, _describe(second)
         assert all(1980 <= p.year <= 1989 for p in second.rec.picks), _describe(second)
+        titles = {p.title for p in second.rec.picks}
+        assert not titles & {p.title for p in first.rec.picks}, _describe(second)  # no repeats
+
+    retry_scenario(scenario)
+
+
+def test_overlapping_refine_refills_from_the_unseen_pool(retry_scenario) -> None:
+    # A refine whose pool still contains the shown top-5 (Nolan's most-voted
+    # films are all post-2005) used to strand: the cap ran before the shown
+    # filter. Excluding shown titles inside the retriever (ticket #88) refills
+    # the slots with the next unseen films instead. Phrased as a narrowing so
+    # the follow-up router treats it as REFINE (keeps ``shown_movies``); the
+    # bound is a year that exists in the refilled pool (The Prestige, 2006) so
+    # Gate-4's fact-grounding does not reject prose that echoes the query.
+    def scenario(handler) -> None:
+        first = handler("recommend some christopher nolan movies")
+        assert first.rec.picks, _describe(first)
+
+        second = handler("only the ones from 2006 onward, please")
+
+        assert second.telemetry is not None, _describe(second)
+        assert second.rec.picks, _describe(second)
+        assert "fallback" not in second.telemetry.path_taken, _describe(second)
         titles = {p.title for p in second.rec.picks}
         assert not titles & {p.title for p in first.rec.picks}, _describe(second)  # no repeats
 

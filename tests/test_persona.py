@@ -136,7 +136,7 @@ def test_generator_system_prompt_is_mayas_voice() -> None:
 # -- live handler routing -----------------------------------------------------
 
 
-def _fake_retriever(query: str, parsed: ParsedQuery):
+def _fake_retriever(query: str, parsed: ParsedQuery, shown_movies=()):
     return [ScoredMovie(tmdb_id=1, title="Parasite", year=2019, regions=["KR"])]
 
 

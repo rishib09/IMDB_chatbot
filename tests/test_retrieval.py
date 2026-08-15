@@ -456,6 +456,32 @@ def test_rerank_pool_gates_eligibility_before_vote_count(tmp_path: Path) -> None
     assert len(out) == 2
 
 
+@requires_faiss
+def test_graph_excludes_shown_before_the_cap(tmp_path: Path) -> None:
+    """Attacks: the graph's retrieve node drops shown titles only AFTER the
+    retriever's top-5 cap (ticket #88). Adversary pool: the top-5 by vote_count
+    are all already shown, so a post-cap filter would leave zero candidates and
+    strand the refine in fallback. Exclusion inside the retriever refills the
+    five slots with unseen films."""
+    from imdb_chatbot.graph.build import _make_retrieve
+    from imdb_chatbot.graph.tracing import TraceCollector
+    from imdb_chatbot.schemas import TurnState
+
+    hybrid = _voted_retriever(tmp_path)
+    shown = [s.tmdb_id for s in hybrid.retrieve(QUERY, ParsedQuery())]
+    assert shown == [8, 2, 12, 7, 4]  # the whole uncapped top-5 is already shown
+
+    node = _make_retrieve(hybrid.retrieve, TraceCollector())
+    state = TurnState(
+        trace_id="t", session_id="s", raw_query=QUERY, parsed=ParsedQuery(), shown_movies=shown
+    )
+    got = [m.tmdb_id for m in node(state)["retrieved"]]
+
+    assert len(got) == 5, got
+    assert not set(got) & set(shown), got
+    assert got == [10, 1, 11, 5, 9]  # next five by vote_count, unseen
+
+
 # -- person-aware retrieval (ticket #50) -------------------------------------
 
 

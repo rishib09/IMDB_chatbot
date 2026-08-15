@@ -42,7 +42,7 @@ def _recording_retriever(catalog: list[ScoredMovie], seen: list[ParsedQuery]):
     present on a later turn (the constraint held across turns).
     """
 
-    def retrieve(query: str, parsed: ParsedQuery) -> list[ScoredMovie]:
+    def retrieve(query: str, parsed: ParsedQuery, shown_movies=()) -> list[ScoredMovie]:
         seen.append(parsed)
         return list(catalog)
 

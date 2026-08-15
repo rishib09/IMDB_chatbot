@@ -24,7 +24,7 @@ from imdb_chatbot.schemas import (
 PRICING = {"deepseek/deepseek-chat": {"input": 0.14, "output": 0.28}}
 
 
-def _fake_retriever(query: str, parsed: ParsedQuery):
+def _fake_retriever(query: str, parsed: ParsedQuery, shown_movies=()):
     return [ScoredMovie(tmdb_id=1, title="Parasite", year=2019, regions=["KR"])]
 
 
