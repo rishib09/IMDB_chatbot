@@ -36,7 +36,7 @@ from dataclasses import dataclass
 
 from langgraph.graph import END, START, StateGraph
 
-from ..schemas import ParsedQuery, RecommendationSet, ScoredMovie, TurnState
+from ..schemas import EXCLUSION_FIELDS, ParsedQuery, RecommendationSet, ScoredMovie, TurnState
 from ..store import TraceStore
 from .gate4 import run_gate4
 from .models import GraphModels
@@ -208,30 +208,17 @@ def _session_merged_parsed(state: TurnState) -> ParsedQuery:
     """Fold session exclusions (#21) and standing constraints (#54) into the parse.
 
     The current turn's parse wins where it specifies a field; unspecified fields
-    inherit the standing constraints carried from earlier turns. Exclusions
-    (session-level and standing) are always unioned in.
+    inherit the standing constraints carried from earlier turns (derived from the
+    model, see ``ParsedQuery.merge_over``). Exclusions come from THIS turn plus
+    the session set (which minimal precedence may have suspended) - never from
+    standing, so a re-request of a previously excluded genre is honoured (#21/#22).
     """
     parsed = state.parsed or ParsedQuery()
-    standing = (
-        ParsedQuery.model_validate(state.session_standing)
-        if state.session_standing
-        else ParsedQuery()
-    )
-    return ParsedQuery(
-        genres=parsed.genres or standing.genres,
-        similar_to=parsed.similar_to or standing.similar_to,
-        director=parsed.director or standing.director,
-        actor=parsed.actor or standing.actor,
-        # Exclusions come from THIS turn plus the session set (which minimal
-        # precedence may have suspended) - never from standing, so a re-request of
-        # a previously excluded genre is honoured (ticket #21/#22).
-        exclude_actors=sorted({*parsed.exclude_actors, *state.session_exclude_actors}),
-        exclude_genres=sorted({*parsed.exclude_genres, *state.session_exclude_genres}),
-        min_year=parsed.min_year if parsed.min_year is not None else standing.min_year,
-        max_year=parsed.max_year if parsed.max_year is not None else standing.max_year,
-        min_rating=parsed.min_rating if parsed.min_rating is not None else standing.min_rating,
-        region=parsed.region or standing.region,
-    )
+    standing = ParsedQuery.model_validate(state.session_standing or {})
+    exclusions = {
+        f: sorted({*getattr(parsed, f), *getattr(state, f"session_{f}")}) for f in EXCLUSION_FIELDS
+    }
+    return parsed.merge_over(standing).model_copy(update=exclusions)
 
 
 def _make_retrieve(retriever: RetrieverFn, collector: TraceCollector):

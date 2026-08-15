@@ -360,12 +360,13 @@ def resolve_collision(
     This is turn-local only: it returns the effective set to hand to retrieval and
     NEVER mutates the store, so the durable triple survives unchanged for future
     turns. No clarifying question is asked (that is a later ticket).
+
+    Empty / whitespace-only strings are ignored on BOTH sides (ticket #72): they
+    can never name a genre or actor, so they are neither requested nor effective.
     """
     requested_norm = {item.strip().lower() for item in requested if item and item.strip()}
-    effective: list[str] = []
-    for exclusion in durable_exclusions:
-        if exclusion and exclusion.strip().lower() in requested_norm:
-            # The user is explicitly asking for this now - comply this turn.
-            continue
-        effective.append(exclusion)
-    return effective
+    return [
+        exclusion
+        for exclusion in durable_exclusions
+        if exclusion and exclusion.strip() and exclusion.strip().lower() not in requested_norm
+    ]
