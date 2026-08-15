@@ -114,22 +114,9 @@ class ConversationState(BaseModel):
         """Fold a turn's POSITIVE constraints onto the standing set (current wins).
 
         Fields the current turn specified override the standing value; unspecified
-        ones inherit. Exclusions are deliberately NOT accumulated here - they are
-        owned by the ``exclude_*`` / ``session_exclude_*`` mechanism together with
-        minimal precedence (ticket #21/#22), which lets a later turn re-request a
-        previously excluded genre. Accumulating them here would defeat that.
+        ones inherit; exclusions never accumulate (see ``ParsedQuery.merge_over``).
         """
-        s = self.standing
-        self.standing = ParsedQuery(
-            genres=parsed.genres or s.genres,
-            similar_to=parsed.similar_to or s.similar_to,
-            director=parsed.director or s.director,
-            actor=parsed.actor or s.actor,
-            min_year=parsed.min_year if parsed.min_year is not None else s.min_year,
-            max_year=parsed.max_year if parsed.max_year is not None else s.max_year,
-            min_rating=parsed.min_rating if parsed.min_rating is not None else s.min_rating,
-            region=parsed.region or s.region,
-        )
+        self.standing = parsed.merge_over(self.standing)
 
     def record_turn(self, turn: Turn) -> None:
         """Append a completed turn, summarizing anything pushed out of the window."""

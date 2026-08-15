@@ -58,6 +58,24 @@ class ParsedQuery(BaseModel):
     min_rating: float | None = None
     region: str | None = None
 
+    def merge_over(self, standing: ParsedQuery) -> ParsedQuery:
+        """``standing`` with every positive field THIS turn specified overriding it.
+
+        Derived from the model dump, so a new ``ParsedQuery`` field joins the
+        standing set with no code change (ticket #72). "Specified" means
+        non-default (``[]`` / ``None`` inherit; ``0`` does not). Exclusions
+        (``EXCLUSION_FIELDS``) are never merged: they belong to the
+        ``session_exclude_*`` + minimal-precedence mechanism (#21/#22), which
+        must be able to suspend a remembered exclusion the user re-requests.
+        """
+        return standing.model_copy(
+            update=self.model_dump(exclude_defaults=True, exclude=EXCLUSION_FIELDS),
+        )
+
+
+# ``ParsedQuery`` fields that are exclusions (never standing); classified by name.
+EXCLUSION_FIELDS = frozenset(f for f in ParsedQuery.model_fields if f.startswith("exclude_"))
+
 
 class ScoredMovie(BaseModel):
     tmdb_id: int
