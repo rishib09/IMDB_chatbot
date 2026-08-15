@@ -184,25 +184,32 @@ def update_state_from_result(conversation: ConversationState, result: TurnResult
     """Fold a finished turn back into the session state.
 
     - New exclusions the extractor found this turn persist for the session.
+    - Standing constraints are EARNED (ticket #85): only a turn that produced
+      picks accumulates its constraints, and a turn where the graph had to relax
+      the inherited standing set (``relax_standing`` in the path) discards it.
     - Movies actually recommended are marked ``shown`` (no repeats later).
     - The raw query + rewritten query + recommended titles enter the history
       window (raw query stored per PRD section 6).
     """
     final = result.state
+    picks = final.response.picks if final.response is not None else []
 
+    if "relax_standing" in final.path_taken:
+        conversation.reset_standing()
     if final.parsed is not None:
         conversation.add_exclusions(
             final.parsed.exclude_actors,
             final.parsed.exclude_genres,
         )
-        # Accumulate this turn's constraints so the next refinement inherits them.
-        conversation.merge_standing(final.parsed)
+        if picks:
+            # Accumulate this turn's constraints so the next refinement inherits them.
+            conversation.merge_standing(final.parsed)
 
     recommended_titles: list[str] = []
     shown_ids: list[int] = []
-    if final.response is not None and final.response.picks:
+    if picks:
         by_title_year = index_by_title_year(final.candidates)
-        for pick in final.response.picks:
+        for pick in picks:
             recommended_titles.append(f"{pick.title} ({pick.year})")
             tmdb_id = by_title_year.get((pick.title, pick.year))
             if tmdb_id is not None:

@@ -249,5 +249,107 @@ def test_history_line_records_raw_query_and_recommendation() -> None:
     assert "John Wick (2014)" in line
 
 
+# -- standing constraints are earned (ticket #85) -----------------------------
+
+
+def _region_aware_retriever(catalog: list[ScoredMovie], seen: list[ParsedQuery]):
+    """Stub retriever where region='korean' is unsatisfiable (empties the pool)."""
+
+    def retrieve(query: str, parsed: ParsedQuery) -> list[ScoredMovie]:
+        seen.append(parsed)
+        return [] if parsed.region == "korean" else list(catalog)
+
+    return retrieve
+
+
+def _nolan_after_korean_extract(query: str) -> ParsedQuery:
+    if "nolan" in query.lower():
+        return ParsedQuery(director="Christopher Nolan")
+    return ParsedQuery(region="korean", genres=["Thriller"])
+
+
+def test_turn_that_returned_nothing_cannot_constrain_later_turns() -> None:
+    """Attacks: "every turn's parse is worth remembering as a standing constraint".
+
+    Turn 1 carries an unsatisfiable constraint and yields nothing; turn 2 is an
+    unrelated query. Nothing from turn 1 may reach turn 2's merged parse.
+    """
+    seen: list[ParsedQuery] = []
+    catalog = [_movie(1, "Inception", 2010), _movie(2, "Interstellar", 2014)]
+    retriever = _region_aware_retriever(catalog, seen)
+    models = _pick_first_candidate_models(extract_fn=_nolan_after_korean_extract)
+    conv = ConversationState(session_id="sess-85")
+
+    first = run_session_turn(
+        conv, "a gritty korean revenge thriller", retriever=retriever, models=models, trace_id="t1"
+    )
+    assert first.state.response.picks == []
+    assert conv.standing == ParsedQuery()  # a turn that returned nothing earned nothing
+
+    second = run_session_turn(
+        conv, "recommend some christopher nolan movies", retriever=retriever, models=models, trace_id="t2"
+    )
+    assert seen[-1].region is None and seen[-1].genres == []
+    assert seen[-1].director == "Christopher Nolan"
+    assert second.state.response.picks
+    assert "relax_standing" not in second.state.path_taken  # nothing to relax
+
+
+def test_standing_that_empties_the_pool_is_relaxed_once_and_recorded() -> None:
+    """Attacks: "an inherited standing constraint is applied unconditionally".
+
+    Even if a bad constraint got into the standing set, a turn it would starve
+    retries once without it, records ``relax_standing`` in the path, and the
+    session drops the offending standing set afterwards.
+    """
+    seen: list[ParsedQuery] = []
+    catalog = [_movie(1, "Inception", 2010)]
+    retriever = _region_aware_retriever(catalog, seen)
+    models = _pick_first_candidate_models(extract_fn=_nolan_after_korean_extract)
+    conv = ConversationState(session_id="sess-85b")
+    conv.standing = ParsedQuery(region="korean")  # poisoned by hand
+
+    result = run_session_turn(
+        conv, "recommend some christopher nolan movies", retriever=retriever, models=models, trace_id="t1"
+    )
+
+    assert result.state.response.picks
+    path = result.state.path_taken
+    assert path[path.index("retrieve") : path.index("retrieve") + 3] == [
+        "retrieve",
+        "relax_standing",
+        "retrieve",
+    ]
+    assert [p.region for p in seen] == ["korean", None]  # merged first, then own parse only
+    assert conv.standing.region is None and conv.standing.director == "Christopher Nolan"
+
+
+def test_deliberate_refinement_across_successful_turns_still_accumulates() -> None:
+    """Attacks: "earning standing constraints breaks the #54 refinement loop".
+
+    Two successful turns: the second (years only) must still inherit the first
+    turn's genre, with no relaxation.
+    """
+    seen: list[ParsedQuery] = []
+    catalog = [_movie(1, "Alien", 1979), _movie(2, "Aliens", 1986)]
+    retriever = _region_aware_retriever(catalog, seen)
+
+    def extract(query: str) -> ParsedQuery:
+        if "1980s" in query:
+            return ParsedQuery(min_year=1980, max_year=1989)
+        return ParsedQuery(genres=["Sci-Fi"])
+
+    models = _pick_first_candidate_models(extract_fn=extract)
+    conv = ConversationState(session_id="sess-85c")
+    run_session_turn(conv, "good sci-fi movies", retriever=retriever, models=models, trace_id="t1")
+    second = run_session_turn(
+        conv, "only the ones from the 1980s", retriever=retriever, models=models, trace_id="t2"
+    )
+
+    assert seen[-1].genres == ["Sci-Fi"] and (seen[-1].min_year, seen[-1].max_year) == (1980, 1989)
+    assert "relax_standing" not in second.state.path_taken
+    assert conv.standing.genres == ["Sci-Fi"] and conv.standing.min_year == 1980
+
+
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(pytest.main([__file__, "-q"]))

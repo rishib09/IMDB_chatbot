@@ -202,6 +202,23 @@ def test_replace_switches_to_a_new_topic(retry_scenario) -> None:
     retry_scenario(scenario)
 
 
+def test_failed_turn_does_not_poison_the_next_search(retry_scenario) -> None:
+    # Ticket #85 reproduction: a turn whose extraction yields an unsatisfiable
+    # constraint (region='korean' on main, see #84) must not be promoted into a
+    # standing constraint that starves every later search in the session.
+    def scenario(handler) -> None:
+        first = handler("a gritty korean revenge thriller")
+
+        second = handler("recommend some christopher nolan movies")
+
+        assert second.telemetry is not None, _describe(first) + " || " + _describe(second)
+        assert second.rec.picks, _describe(first) + " || " + _describe(second)
+        titles = {p.title for p in second.rec.picks}
+        assert titles & NOLAN_FILMS, _describe(first) + " || " + _describe(second)
+
+    retry_scenario(scenario)
+
+
 def test_vague_rejection_gets_a_clarifying_question(retry_scenario) -> None:
     # Seeded with the most stable search probe: vibe-phrased first turns
     # ("feel-good animated movies") intermittently lose the extractor's

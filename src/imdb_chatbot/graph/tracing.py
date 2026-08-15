@@ -64,8 +64,10 @@ def traced(node_name: str, collector: TraceCollector) -> Callable[[NodeFn], Node
                 collector.timings_ms.get(node_name, 0.0) + elapsed_ms
             )
             # Append to path_taken (visible retry cycles); overwrite channel with
-            # the extended list since LangGraph uses last-value semantics here.
-            updates["path_taken"] = [*state.path_taken, node_name]
+            # the extended list since LangGraph uses last-value semantics here. A
+            # node may pre-extend the path itself (an in-node retry, e.g. the
+            # ``relax_standing`` step of retrieve) - honour that before appending.
+            updates["path_taken"] = [*updates.get("path_taken", state.path_taken), node_name]
             return updates
 
         wrapper.__name__ = f"traced_{node_name}"
