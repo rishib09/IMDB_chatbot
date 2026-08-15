@@ -1,0 +1,83 @@
+interactions:
+- request:
+    body: '{"messages":[{"content":"Extract the movie title the user is asking about.
+      Reply with ONLY the title, nothing else. If there is no title, reply with an
+      empty line.","role":"system"},{"content":"who directed Parasite?","role":"user"}],"model":"google/gemma-3-12b-it","stream":false,"temperature":0.0,"usage":{"include":true}}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '324'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+      user-agent:
+      - OpenAI/Python 2.49.0
+      x-stainless-arch:
+      - other:amd64
+      x-stainless-async:
+      - 'false'
+      x-stainless-lang:
+      - python
+      x-stainless-os:
+      - Windows
+      x-stainless-package-version:
+      - 2.49.0
+      x-stainless-raw-response:
+      - 'true'
+      x-stainless-retry-count:
+      - '0'
+      x-stainless-runtime:
+      - CPython
+      x-stainless-runtime-version:
+      - 3.14.3
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAA/3yR3W7TQBCF32Wu7ZA0TtP4EqEKVCH1phIIIWu9HjtD98fdWQeqyO/OLKlTVwR8
+        Y+nM2W/OzByBGiihQ5evtjfX22KzKnb5LgwP+mNx1369pfr97dPN6stnyMDXP1BHseu9igvtbW8w
+        kndS0gFVREG9UjKwvkGT6N53Bt91aK3K1/nqqs4pyqM++AM1GMTyAbH/5NqgROZnjmirllyHoQ/k
+        pKUbjJEKhgNprCKlRydN771IDOW3I5Br8BeUywyM74Re8+QSGPG+kpQseUvg6Htp5VSkA1b/qFpk
+        Vh1CeYTgjfxBMRNH5VJ67V3ElA3uVVBMEUUM2A6szNT2RJRBTsI4fs9gmJgS0Paxiv4RnQQtrhNz
+        2ulZXmcQfVTm1bdLPpbGy8UyfVfbTQbEVf3sH6FslWHM3sKrBqMiw6mrVnqPzZkmu/qjVD+DTDCX
+        1dCQnwvpVjNhPMWYs4eeo4xsK3ItBnRyqr+TXjC9hH3rXWeXedOG+MVfLDaYb8cLy5tHO19iPhFZ
+        OcV/Zh7H8TcAAAD//wMACdcEPSEDAAA=
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      cf-ray:
+      - a2b343631d6533a6-EWR
+      connection:
+      - keep-alive
+      content-encoding:
+      - gzip
+      content-type:
+      - application/json
+      date:
+      - Fri, 14 Aug 2026 22:05:50 GMT
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      server:
+      - cloudflare
+      transfer-encoding:
+      - chunked
+      x-content-type-options:
+      - nosniff
+      x-generation-id:
+      - gen-1786745149-9ruUcH4KfYFibBFq81XM
+    status:
+      code: 200
+      message: OK
+version: 1

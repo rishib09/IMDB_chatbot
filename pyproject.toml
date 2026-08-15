@@ -26,6 +26,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    # Records real OpenRouter responses as cassettes so a deterministic subset of
+    # the LLM-boundary tests replays in CI with zero network (ticket #69).
+    "pytest-recording>=0.13",
     "ruff>=0.5",
 ]
 # The real embedder pulls sentence-transformers (and torch). Kept OUT of the
@@ -41,6 +44,12 @@ packages = ["src/imdb_chatbot"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+# The live tier (real model + index + store) is deselected by default; a CLI
+# `-m live` comes after this addopts entry, so the last -m wins and selects it.
+addopts = ["-m", "not live"]
+markers = [
+    "live: real-model integration turn (run explicitly: pytest -m live, under dotenvx)",
+]
 
 [tool.ruff]
 line-length = 100
