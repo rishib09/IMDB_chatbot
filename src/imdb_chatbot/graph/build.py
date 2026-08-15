@@ -38,6 +38,7 @@ from ..schemas import ParsedQuery, RecommendationSet, ScoredMovie, TurnState
 from ..store import TraceStore
 from .gate4 import run_gate4
 from .models import GraphModels
+from .normalize import CorpusVocab, normalize_parsed
 from .tracing import TraceCollector, serialize_trace, traced
 from .usage import UsageMeter
 
@@ -168,7 +169,14 @@ def _make_rewrite(models: GraphModels, collector: TraceCollector):
     return rewrite
 
 
-def _make_extract(models: GraphModels, collector: TraceCollector):
+def _make_extract(models: GraphModels, collector: TraceCollector, vocab: CorpusVocab | None):
+    def guard(parsed: ParsedQuery, query: str) -> ParsedQuery:
+        # Deterministic guards over the stochastic extractor: corpus vocabulary
+        # (#84) first, so an unmappable region becomes None before the US default.
+        if vocab is not None:
+            parsed = normalize_parsed(parsed, vocab)
+        return apply_region_default(correct_person_role(parsed, query), query)
+
     @traced("extract", collector)
     def extract(state: TurnState) -> dict:
         query = _effective_query(state)
@@ -176,15 +184,14 @@ def _make_extract(models: GraphModels, collector: TraceCollector):
             parsed = models.extract(query)
             if not isinstance(parsed, ParsedQuery):
                 parsed = ParsedQuery.model_validate(parsed)
-            parsed = apply_region_default(correct_person_role(parsed, query), query)
-            return {"parsed": parsed, "extract_failed": False}
+            return {"parsed": guard(parsed, query), "extract_failed": False}
         except Exception:  # noqa: BLE001 - drives the JSON-retry edge
             retries = state.extract_retries + 1
             if retries >= MAX_EXTRACT_RETRIES:
                 # Exhausted LLM attempts: fall back to regex extraction and
                 # continue (extract_failed cleared so the edge routes to retrieve).
                 return {
-                    "parsed": apply_region_default(regex_extract(query), query),
+                    "parsed": guard(regex_extract(query), query),
                     "extract_failed": False,
                     "extract_retries": retries,
                     "degradation": [*state.degradation, "extract_regex_fallback"],
@@ -368,18 +375,21 @@ def build_graph(
     retriever: RetrieverFn,
     models: GraphModels,
     collector: TraceCollector | None = None,
+    vocab: CorpusVocab | None = None,
 ):
     """Compile the single-turn ``StateGraph``.
 
     ``collector`` is the per-turn tracing side-channel; ``run_turn`` supplies a
     fresh one per turn. Passing it here (rather than via graph config) keeps the
     nodes plain single-argument functions and keeps concurrent turns isolated.
+    ``vocab`` (the corpus's regions/genres/titles) normalizes the extractor's
+    output; ``None`` skips that guard.
     """
     collector = collector or TraceCollector()
 
     builder = StateGraph(TurnState)
     builder.add_node("rewrite", _make_rewrite(models, collector))
-    builder.add_node("extract", _make_extract(models, collector))
+    builder.add_node("extract", _make_extract(models, collector, vocab))
     builder.add_node("retrieve", _make_retrieve(retriever, collector))
     builder.add_node("filter", _make_filter(collector))
     builder.add_node("generate", _make_generate(models, collector))
@@ -423,6 +433,7 @@ def run_turn(
     versions: dict[str, str] | None = None,
     usage: UsageMeter | None = None,
     pricing: dict[str, dict[str, float]] | None = None,
+    vocab: CorpusVocab | None = None,
 ) -> TurnResult:
     """Run one conversational turn end-to-end and serialize a ``TurnTrace``.
 
@@ -432,7 +443,7 @@ def run_turn(
     token totals and cost are folded into the trace. Returns state and trace.
     """
     collector = TraceCollector()
-    graph = build_graph(retriever=retriever, models=models, collector=collector)
+    graph = build_graph(retriever=retriever, models=models, collector=collector, vocab=vocab)
     result = graph.invoke(state)
     final = TurnState.model_validate(result)
     trace = serialize_trace(

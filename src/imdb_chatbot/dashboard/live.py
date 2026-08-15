@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..graph import GraphModels, RetrieverFn, UsageMeter, estimate_cost
+from ..graph.normalize import CorpusVocab
 from ..movie_info import TitleExtractor, TitleLookup, answer_movie_question
 from ..persona import (
     Intent,
@@ -113,6 +114,9 @@ class LiveResources:
     # LLM that pulls the title out of the question. None -> a generic redirect.
     movie_lookup: TitleLookup | None = None
     title_extractor: TitleExtractor | None = None
+    # Corpus regions/genres/titles the extractor's output is normalized against
+    # (ticket #84). None -> extractor output is used as-is.
+    vocab: CorpusVocab | None = None
 
 
 def load_live_resources(
@@ -207,6 +211,7 @@ def load_live_resources(
     from ..movie_info import build_title_lookup
 
     movie_lookup = build_title_lookup(hybrid.movies_by_id.values())
+    vocab = CorpusVocab.from_movies(hybrid.movies_by_id.values())
 
     return LiveResources(
         retriever=retriever,
@@ -222,6 +227,7 @@ def load_live_resources(
         followup_fn=followup_fn,
         movie_lookup=movie_lookup,
         title_extractor=title_extractor,
+        vocab=vocab,
     )
 
 
@@ -355,6 +361,7 @@ def build_live_chat_handler(
             versions=resources.versions,
             usage=meter,
             pricing=resources.pricing,
+            vocab=resources.vocab,
         )
         rec = result.state.response or RecommendationSet(picks=[], prose="")
         # Backfill authoritative posters from the corpus (ticket #2 fix).

@@ -202,6 +202,21 @@ def test_replace_switches_to_a_new_topic(retry_scenario) -> None:
     retry_scenario(scenario)
 
 
+def test_nationality_phrased_search_returns_picks(retry_scenario) -> None:
+    # Ticket #84: the extractor emits region='korean' (not 'KR'), plus a
+    # non-genre 'revenge' and a non-title similar_to; unnormalized, that
+    # filtered out every movie and served the fallback.
+    def scenario(handler) -> None:
+        reply = handler("a gritty korean revenge thriller")
+
+        meter = reply.telemetry
+        assert meter is not None, _describe(reply)
+        assert reply.rec.picks, _describe(reply)
+        assert "fallback" not in meter.path_taken, _describe(reply)
+
+    retry_scenario(scenario)
+
+
 def test_vague_rejection_gets_a_clarifying_question(retry_scenario) -> None:
     # Seeded with the most stable search probe: vibe-phrased first turns
     # ("feel-good animated movies") intermittently lose the extractor's
