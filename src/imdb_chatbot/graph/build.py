@@ -5,9 +5,12 @@ Topology (deterministic spine, stochastic leaves):
     START -> rewrite -> extract
     extract  --(extract_failed and extract_retries < 2)--> extract   (JSON retry)
              --(else)------------------------------------> retrieve
-    retrieve -> filter   (retrieve retries once without the session's standing
-                          constraints if they emptied the pool - shows up in the
-                          path as ``retrieve -> relax_standing -> retrieve``, #85)
+    retrieve -> filter   (retrieve walks a relaxation ladder while the pool is
+                          empty, each rung visible in the path as
+                          ``retrieve -> <rung> -> retrieve``:
+                            relax_standing     drop inherited standing constraints (#85)
+                            relax_constraints  drop the extractor's guesses and
+                                               search semantically (#90))
     filter   --(len(candidates) == 0)--> fallback
              --(else)-----------------> generate
     generate -> validate
@@ -221,6 +224,23 @@ def _session_merged_parsed(state: TurnState) -> ParsedQuery:
     return parsed.merge_over(standing).model_copy(update=exclusions)
 
 
+# Fields the unconstrained retry KEEPS. Exclusions are user-stated negations
+# (#21/#22) and a named person is an explicit request, not a guess - dropping
+# either would answer a different question than the one asked, and would rob the
+# honest "no films by X in my catalog" fallback of its meaning (#50).
+_KEEP_ON_RELAX = (*EXCLUSION_FIELDS, "director", "actor")
+
+
+def _unconstrained(parsed: ParsedQuery) -> ParsedQuery:
+    """``parsed`` stripped to what the user actually stated (ticket #90).
+
+    Every constraint the stochastic extractor *inferred* - genres, year bounds,
+    rating floor, region, similar_to - is dropped, so retrieval falls back to
+    embedding similarity over the whole corpus.
+    """
+    return ParsedQuery(**{f: getattr(parsed, f) for f in _KEEP_ON_RELAX})
+
+
 def _make_retrieve(retriever: RetrieverFn, collector: TraceCollector):
     def fetch(state: TurnState, parsed: ParsedQuery) -> list[ScoredMovie]:
         # Session no-repeat guarantee (ticket #21): shown titles go INTO the
@@ -236,6 +256,7 @@ def _make_retrieve(retriever: RetrieverFn, collector: TraceCollector):
         parsed = _session_merged_parsed(state)
         retrieved = fetch(state, parsed)
         updates: dict = {}
+        path = list(state.path_taken)
         if not retrieved and state.session_standing:
             # Standing constraints must be EARNED (ticket #85): if the inherited
             # ones empty the pool, drop them and retry once with just this turn's
@@ -243,10 +264,20 @@ def _make_retrieve(retriever: RetrieverFn, collector: TraceCollector):
             own = _session_merged_parsed(state.model_copy(update={"session_standing": {}}))
             if own != parsed:
                 parsed, retrieved = own, fetch(state, own)
-                updates = {
-                    "session_standing": {},
-                    "path_taken": [*state.path_taken, "retrieve", "relax_standing"],
-                }
+                path += ["retrieve", "relax_standing"]
+                updates["session_standing"] = {}
+        if not retrieved:
+            # The extractor is stochastic (ticket #90): a vibe-phrased query can
+            # flake to the regex fallback, or parse cleanly into constraints the
+            # corpus cannot satisfy. Either way the turn degrades to an
+            # UNCONSTRAINED semantic search rather than dead-ending on a guess.
+            semantic = _unconstrained(parsed)
+            if semantic != parsed:
+                parsed, retrieved = semantic, fetch(state, semantic)
+                path += ["retrieve", "relax_constraints"]
+                updates["degradation"] = [*state.degradation, "relax_constraints"]
+        if path != state.path_taken:
+            updates["path_taken"] = path
         return {**updates, "retrieved": retrieved, "parsed": parsed}
 
     return retrieve

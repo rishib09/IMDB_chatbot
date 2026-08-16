@@ -250,6 +250,25 @@ def test_nationality_phrased_search_returns_picks(retry_scenario) -> None:
     retry_scenario(scenario)
 
 
+def test_vibe_phrased_search_returns_picks(retry_scenario) -> None:
+    # Ticket #90: the exact probe that flaked. gemma-3-12b intermittently drops
+    # its structured output on a vibe-phrased query; the regex fallback then
+    # finds no genre and the US region default is applied to an otherwise empty
+    # parse, so the pool emptied and the turn served the fallback. However the
+    # extraction lands - clean, or flaked all the way to regex - this must come
+    # back with picks, because the relaxation ladder ends in an unconstrained
+    # semantic search.
+    def scenario(handler) -> None:
+        reply = handler("feel-good animated movies")
+
+        meter = reply.telemetry
+        assert meter is not None, _describe(reply)
+        assert reply.rec.picks, _describe(reply)
+        assert "fallback" not in meter.path_taken, _describe(reply)
+
+    retry_scenario(scenario)
+
+
 def test_vague_rejection_gets_a_clarifying_question(retry_scenario) -> None:
     # Seeded with the most stable search probe: vibe-phrased first turns
     # ("feel-good animated movies") intermittently lose the extractor's
