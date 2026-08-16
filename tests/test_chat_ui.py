@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from streamlit.testing.v1 import AppTest
 
+from imdb_chatbot.dashboard.app import render_chat_page
 from imdb_chatbot.dashboard.live import ChatReply, TurnTelemetry
 from imdb_chatbot.dashboard.render import (
     PLACEHOLDER_POSTER,
@@ -95,11 +96,33 @@ def test_relax_options_returns_independent_copies() -> None:
     assert relax_options()[0]["label"] != "mutated"
 
 
-def _chat_page_script() -> None:
-    """Top-level script body for AppTest: render the Chat page only."""
-    from imdb_chatbot.dashboard.app import render_chat_page
+def _chat_page_script(render) -> None:
+    """Top-level script body for AppTest: render the Chat page only.
 
-    render_chat_page()
+    AppTest re-executes this body in a fresh namespace, so the page function
+    arrives as a kwarg rather than an ``import`` statement. Importing it here
+    instead put the whole ``dashboard.app`` chain (store, eval.detect, graph)
+    inside the timed script run - see ``_chat_app``.
+    """
+    render()
+
+
+def _chat_app() -> AppTest:
+    """An AppTest for the Chat page, with a script-run deadline that fits (#91).
+
+    ``default_timeout`` bounds ONE script run, and Streamlit's 3s default was
+    being spent on cold start rather than rendering: the first run in a process
+    also pays the ScriptRunner bootstrap, measured at ~0.9-1.1s idle here, on
+    top of ~1s for the cold ``dashboard.app`` import the script body used to do.
+    Under full-suite load that overshot 3s and the test failed on the timeout,
+    never reaching its assertions. Passing ``render`` in removes the import from
+    the timed window; the raised budget covers the bootstrap that is left.
+    Rendering itself is ~0.3s, so this is slack for machine load - a genuinely
+    hung page still fails, just later.
+    """
+    return AppTest.from_function(
+        _chat_page_script, default_timeout=15, kwargs={"render": render_chat_page}
+    )
 
 
 def test_two_dead_end_turns_do_not_collide_relax_button_keys() -> None:
@@ -113,7 +136,7 @@ def test_two_dead_end_turns_do_not_collide_relax_button_keys() -> None:
         rec=RecommendationSet(picks=[], prose="I could not find a match."),
         telemetry=None,
     )
-    at = AppTest.from_function(_chat_page_script)
+    at = _chat_app()
     at.session_state["chat_history"] = [
         {"role": "user", "text": "first query"},
         {"role": "assistant", "reply": fallback},
@@ -142,7 +165,7 @@ def test_telemetry_strip_renders_model_tokens_and_cost() -> None:
             cost_usd=0.0021,
         ),
     )
-    at = AppTest.from_function(_chat_page_script)
+    at = _chat_app()
     at.session_state["chat_history"] = [
         {"role": "user", "text": "a pick please"},
         {"role": "assistant", "reply": reply},
@@ -180,7 +203,7 @@ def _fake_reply_handler(query: str) -> ChatReply:
 
 def test_pending_query_is_answered_and_usage_accumulates() -> None:
     """A submitted (pending) query is answered on rerun and folds into session usage."""
-    at = AppTest.from_function(_chat_page_script)
+    at = _chat_app()
     at.session_state["chat_handler"] = _fake_reply_handler
     at.session_state["chat_history"] = [{"role": "user", "text": "a sci-fi movie"}]
     at.session_state["pending_query"] = "a sci-fi movie"
