@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import time
 from pathlib import Path
 
 import numpy as np
@@ -218,6 +219,129 @@ def test_cache_embeds_only_misses(tmp_path: Path) -> None:
         assert embedder.encoded_texts == ["c"]
     finally:
         cache.close()
+
+
+def _count_commits(cache: EmbeddingCache) -> list[str]:
+    """Attach a SQLite trace callback; the returned list grows by one per COMMIT."""
+    commits: list[str] = []
+    cache._conn.set_trace_callback(
+        lambda sql: commits.append(sql) if sql.strip().upper().startswith("COMMIT") else None
+    )
+    return commits
+
+
+def test_a_thousand_misses_cost_at_most_one_commit(tmp_path: Path) -> None:
+    """Attacks: N cache misses in one embed call cost <= 1 commit (ticket #74).
+
+    Before #74 ``put`` committed per row, so a cold 46k build fsynced 46k times.
+    Count COMMITs via the connection's trace callback while embedding 1,000
+    distinct short texts through the deterministic local StubEmbedder.
+    """
+    cache = EmbeddingCache(tmp_path / "cache.sqlite")
+    try:
+        commits = _count_commits(cache)
+        embedder = CountingEmbedder(StubEmbedder(dim=8))
+        texts = [f"t{i}" for i in range(1000)]
+        embed_cached(embedder, texts, cache)
+        assert len(commits) <= 1
+        assert embedder.calls == 1
+        # Warm re-run: every text hits -> no encode, no write, no commit.
+        commits.clear()
+        embed_cached(embedder, texts, cache)
+        assert embedder.calls == 1
+        assert commits == []
+    finally:
+        cache.close()
+
+
+def test_mixed_hits_and_ragged_batches_commit_once_per_batch(tmp_path: Path) -> None:
+    """Attacks: commits == ceil(misses / batch_size), and batching keeps order.
+
+    A batch mixing hits and misses whose miss count is NOT a multiple of
+    ``batch_size`` (7 misses, batch 4) must commit exactly twice, encode exactly
+    the misses, and return vectors identical to an uncached embed - a wrong
+    index map in the batched write path would silently scramble rows.
+    """
+    cache = EmbeddingCache(tmp_path / "cache.sqlite")
+    try:
+        embedder = CountingEmbedder(StubEmbedder(dim=8))
+        texts = [f"t{i}" for i in range(10)]
+        embed_cached(embedder, texts[:3], cache)  # 3 hits pre-seeded
+        commits = _count_commits(cache)
+        embedder.calls, embedder.encoded_texts = 0, []
+        got = embed_cached(embedder, texts, cache, batch_size=4)
+        assert len(commits) == 2 and embedder.calls == 2
+        assert embedder.encoded_texts == texts[3:]
+        assert np.allclose(got, StubEmbedder(dim=8).encode(texts))
+        assert np.allclose(embed_cached(embedder, texts, cache), got)
+        assert embedder.calls == 2
+    finally:
+        cache.close()
+
+
+@requires_faiss
+def test_embedding_cache_is_the_single_source_of_truth(store: TraceStore, tmp_path: Path) -> None:
+    """Attacks: one cache holds every vector - build path AND query path.
+
+    Ticket #74 found the same cache implemented twice (``EmbeddingCache`` and a
+    ``cache`` table in ``TraceStore``). Embed through both entry points, then
+    assert the vectors live in exactly one SQLite file/table, and that the
+    corpus store no longer carries a cache table of its own.
+    """
+    cache = EmbeddingCache(tmp_path / "cache.sqlite")
+    try:
+        embedder = CountingEmbedder(StubEmbedder(dim=8))
+        result = build_index(
+            store, embedder, dataset_version="ds1",
+            out_root=tmp_path / "index", cache=cache, flip_pointer=False,
+        )
+        loaded = load_index(result.out_dir)
+        dense_search(loaded, embedder, "dream heist", cache=cache)
+        dense_search(loaded, embedder, "dream heist", cache=cache)  # warm query
+        assert embedder.encoded_texts.count("dream heist") == 1
+        (n_rows,) = cache._conn.execute("SELECT COUNT(*) FROM embeddings").fetchone()
+        assert n_rows == len(set(embedder.encoded_texts)) == len(_movies()) + 1
+    finally:
+        cache.close()
+    tables = {
+        row["name"] for row in store._read_conn.execute("SELECT name FROM sqlite_master")
+    }
+    assert "cache" not in tables and not hasattr(store, "cache_put")
+
+
+@pytest.mark.live
+@requires_faiss
+def test_warm_rebuild_over_real_corpus_embeds_nothing(
+    live_corpus_path: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Live: a warm rebuild over the real 46k corpus + real cache embeds NOTHING.
+
+    The embedder is a name/dim-matched shim that RAISES on ``encode``: a single
+    miss aborts the build before anything is written to the shared cache. Also
+    records the warm wall-clock (the cold number is in the #74 PR).
+    """
+    cache_path = live_corpus_path.parent / "embedding_cache.sqlite"
+    if not cache_path.is_file():
+        pytest.skip(f"real embedding cache not found beside the corpus: {cache_path}")
+
+    class NeverEmbed:
+        name, dim = "all-MiniLM-L6-v2", 384
+
+        def encode(self, texts: list[str]) -> np.ndarray:
+            raise AssertionError(f"warm rebuild tried to embed {len(texts)} texts")
+
+    store = TraceStore(live_corpus_path)
+    cache = EmbeddingCache(cache_path)
+    try:
+        t0 = time.perf_counter()
+        result = build_index(
+            store, NeverEmbed(), out_root=tmp_path / "index", cache=cache, flip_pointer=False,
+        )
+        print(f"warm rebuild: {result.count} movies, 0 embedder calls, {time.perf_counter()-t0:.1f}s")
+    finally:
+        cache.close()
+        store.close()
+    assert result.count > 40_000
 
 
 # -- version stamping ---------------------------------------------------------

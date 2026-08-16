@@ -67,11 +67,6 @@ CREATE TABLE IF NOT EXISTS change_ledger (
     data          TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS cache (
-    key   TEXT PRIMARY KEY,
-    value BLOB
-);
-
 CREATE INDEX IF NOT EXISTS idx_traces_session ON traces (session_id);
 CREATE INDEX IF NOT EXISTS idx_traces_ts ON traces (ts);
 """
@@ -310,26 +305,6 @@ class TraceStore:
         if row is None:
             return None
         return ChangeRecord.model_validate_json(row["data"])
-
-    # -- generic cache ---------------------------------------------------------
-
-    def cache_put(self, key: str, value: bytes) -> None:
-        def _do(conn: sqlite3.Connection) -> None:
-            conn.execute(
-                "INSERT OR REPLACE INTO cache (key, value) VALUES (?, ?)",
-                (key, value),
-            )
-
-        self._submit(_do)
-
-    def cache_get(self, key: str) -> bytes | None:
-        with self._read_lock:
-            row = self._read_conn.execute(
-                "SELECT value FROM cache WHERE key = ?", (key,)
-            ).fetchone()
-        if row is None:
-            return None
-        return row["value"]
 
     # -- lifecycle -------------------------------------------------------------
 

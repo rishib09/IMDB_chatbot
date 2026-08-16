@@ -133,7 +133,8 @@ def load_live_resources(
     from ..config import get_secret, load_live_index, load_models_config
     from ..graph.models import _init_slot_model, build_models
     from ..graph.usage import load_pricing, usage_from_message
-    from ..index.build import load_index
+    from ..index.build import DEFAULT_CACHE_PATH, load_index
+    from ..index.cache import EmbeddingCache
     from ..index.embedder import build_embedder
     from ..persona import chat_system_prompt, persona_version
     from ..retrieval.retrieve import HybridRetriever
@@ -167,7 +168,11 @@ def load_live_resources(
     # constructed degrades to the local model inside build_embedder.
     embedder = build_embedder(embedder_profile, cfg)
     store = TraceStore(Path(corpus_path or DEFAULT_CORPUS_PATH))
-    hybrid = HybridRetriever.from_store(loaded, embedder, store)
+    # Query embeddings hit the same cache the build wrote (ticket #74): a repeat
+    # query costs one SQLite lookup, not a model (or network) call.
+    hybrid = HybridRetriever.from_store(
+        loaded, embedder, store, embedding_cache=EmbeddingCache(DEFAULT_CACHE_PATH)
+    )
 
     def retriever(rewritten_query: str, parsed: ParsedQuery, shown_movies=()):
         return hybrid.retrieve(rewritten_query, parsed, shown_movies)
