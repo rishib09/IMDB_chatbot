@@ -118,6 +118,7 @@ def serialize_trace(
         path_taken=state.path_taken,
         extract_retries=state.extract_retries,
         gen_retries=state.gen_retries,
+        gate4_rejects=state.gate4_rejects,
         timings_ms=dict(collector.timings_ms),
         token_usage=token_usage,
         cost_usd=cost_usd,

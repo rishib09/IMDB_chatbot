@@ -300,6 +300,22 @@ def _make_generate(models: GraphModels, collector: TraceCollector):
     return generate
 
 
+def _rejected(state: TurnState, reason: str) -> dict:
+    """State update for one validate rejection, appending it to the trace log.
+
+    ``validation_reason`` only ever holds the LATEST violation (the regen prompt
+    wants one), so a turn that was rejected and then regenerated cleanly used to
+    leave no record of WHY - which is why the 111 stored traces could not answer
+    ticket #89. ``gate4_rejects`` keeps every one, and is serialized.
+    """
+    return {
+        "validation_failed": True,
+        "validation_reason": reason,
+        "gen_retries": state.gen_retries + 1,
+        "gate4_rejects": [*state.gate4_rejects, reason],
+    }
+
+
 def _make_validate(collector: TraceCollector):
     @traced("validate", collector)
     def validate(state: TurnState) -> dict:
@@ -313,21 +329,16 @@ def _make_validate(collector: TraceCollector):
         response = state.response
         structurally_ok = isinstance(response, RecommendationSet) and len(response.picks) > 0
         if not structurally_ok:
-            return {
-                "validation_failed": True,
-                "validation_reason": "structural:empty_picks",
-                "gen_retries": state.gen_retries + 1,
-            }
+            return _rejected(state, "structural:empty_picks")
 
         exclude_actors = state.parsed.exclude_actors if state.parsed else []
-        result = run_gate4(response, state.candidates, exclude_actors)
+        # Both phrasings count as "the user typed this": the rewriter may drop a
+        # year the user did type, and may add none the user did not.
+        query = f"{state.raw_query}\n{state.rewritten_query or ''}"
+        result = run_gate4(response, state.candidates, exclude_actors, query)
         if result.ok:
             return {"validation_failed": False, "validation_reason": None}
-        return {
-            "validation_failed": True,
-            "validation_reason": result.reason,
-            "gen_retries": state.gen_retries + 1,
-        }
+        return _rejected(state, result.reason)
 
     return validate
 
