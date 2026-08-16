@@ -144,25 +144,28 @@ def test_failed_write_raises_and_next_write_still_lands(store: TraceStore) -> No
         pass
 
     def _partial_then_fail(conn: sqlite3.Connection) -> None:
-        conn.execute("INSERT INTO cache (key, value) VALUES ('half', x'00')")
+        conn.execute(
+            "INSERT INTO traces (trace_id, ts, session_id, user_id, data)"
+            " VALUES ('half', '2026-01-01T00:00:00Z', 'sess-1', 'user-1', '{}')"
+        )
         raise Boom
 
     with pytest.raises(Boom):
         store._submit(_partial_then_fail)
     with pytest.raises(sqlite3.OperationalError):
         store._submit(lambda conn: conn.execute("INSERT INTO no_such_table VALUES (1)"))
-    assert store.cache_get("half") is None, "partial write was not rolled back"
+    assert store.read_trace("half") is None, "partial write was not rolled back"
 
     landed = threading.Event()
 
     def _good() -> None:
-        store.cache_put("after", b"ok")
+        store.write_trace(_make_trace("after"))
         landed.set()
 
     t = threading.Thread(target=_good, daemon=True)
     t.start()
     assert landed.wait(timeout=5), "write after a failed write hung"
-    assert store.cache_get("after") == b"ok"
+    assert store.read_trace("after") is not None
     assert not store._write_lock.locked()
 
 
