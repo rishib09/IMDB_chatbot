@@ -51,3 +51,21 @@ These environments don't have `.env.keys`, so give them the private key as a pla
 | `OPENROUTER_API_KEY` | LLM calls | runtime (app + CI) |
 | `HF_TOKEN` | durable memory (HF Dataset-sync, #22) | runtime |
 | `TMDB_API_KEY` / `TMDB_READ_ACCESS_TOKEN` | offline ingestion pull (#14) | build-time only — not needed on Spaces |
+| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | Langfuse tracing (#66) | runtime — **optional** |
+| `LANGFUSE_HOST` | Langfuse region override | runtime — optional, not a secret |
+
+### Langfuse tracing is opt-in
+
+Deployment mode is Langfuse Cloud (decision [#63](https://github.com/rishib09/IMDB_chatbot/issues/63)).
+Add the project keys the same way as any other secret:
+
+```bash
+npx @dotenvx/dotenvx set LANGFUSE_PUBLIC_KEY "pk-lf-..."
+npx @dotenvx/dotenvx set LANGFUSE_SECRET_KEY "sk-lf-..."
+# EU cloud is the SDK default; set LANGFUSE_HOST only for US or a self-host:
+npx @dotenvx/dotenvx set LANGFUSE_HOST "https://us.cloud.langfuse.com"
+```
+
+Unless **both** keys resolve, `graph.tracing.langfuse_handler()` returns `None`, no callback is
+attached, and the turn runs exactly as before. A tracing outage is therefore never a turn outage.
+The persisted `TurnTrace` remains the system of record either way.

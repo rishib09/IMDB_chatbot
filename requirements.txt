@@ -13,5 +13,7 @@ rank-bm25>=0.2.2
 langgraph>=0.2
 langchain-core>=0.3
 langchain-openai>=0.2
+langfuse>=3
+langchain>=1
 sentence-transformers>=2.7
 huggingface-hub>=0.23

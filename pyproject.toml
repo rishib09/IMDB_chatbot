@@ -21,6 +21,13 @@ dependencies = [
     "langgraph>=0.2",
     "langchain-core>=0.3",
     "langchain-openai>=0.2",
+    # Observability (#63/#66): one LangChain callback traces the whole graph.
+    # Tracing is off unless LANGFUSE_PUBLIC_KEY/LANGFUSE_SECRET_KEY are set, so
+    # this is inert in a checkout with no Langfuse account. The `langchain`
+    # meta-package is langfuse.langchain's import guard; it pulls nothing beyond
+    # langchain-core and langgraph, which are already here.
+    "langfuse>=3",
+    "langchain>=1",
 ]
 
 [project.optional-dependencies]

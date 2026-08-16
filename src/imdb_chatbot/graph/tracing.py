@@ -13,10 +13,17 @@ of the orchestration for free (PRD section 7.5):
 At END, ``serialize_trace`` snapshots the final ``TurnState`` (plus the collected
 timings and placeholder artifact versions) into an immutable ``TurnTrace`` that
 ``TraceStore`` persists.
+
+``langfuse_config`` is the second, optional observability layer (ticket #66):
+ONE LangChain callback on the graph invocation, which Langfuse expands into a
+trace with a span per node and a generation per nested LLM call. The persisted
+``TurnTrace`` stays the system of record (decision D1, #63) - Langfuse is the
+dashboard, so it is always optional and never allowed to break a turn.
 """
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -74,6 +81,65 @@ def traced(node_name: str, collector: TraceCollector) -> Callable[[NodeFn], Node
         return wrapper
 
     return decorator
+
+
+# -- Langfuse callback (ticket #66) --------------------------------------------
+
+# Langfuse Cloud (decision D1, #63) reads these from the environment: the
+# dotenvx-encrypted .env locally, platform secrets in CI / on HF Spaces.
+# LANGFUSE_HOST is optional - the SDK defaults to the EU cloud region.
+LANGFUSE_SECRETS = ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY")
+
+
+def _usable_key(name: str) -> bool:
+    """True when ``name`` holds a real key, not a placeholder for one.
+
+    A dotenvx-encrypted ``.env`` read WITHOUT dotenvx resolves to a truthy
+    ``"encrypted:..."`` ciphertext; authenticating with that just floods the log
+    with auth failures, so it counts as unconfigured (cf. the same check on
+    ``OPENROUTER_API_KEY`` in tests/conftest.py).
+    """
+    value = os.environ.get(name, "")
+    return bool(value) and not value.startswith("encrypted:")
+
+
+def langfuse_handler() -> Any | None:
+    """The Langfuse LangChain callback, or ``None`` when tracing is unconfigured.
+
+    Returns ``None`` - a clean no-op, no handler attached at all - when either key
+    is absent, so a checkout with no Langfuse account traces nothing and pays
+    nothing. An unimportable SDK or a constructor failure degrades the same way:
+    an observability outage must never break a turn.
+    """
+    if not all(_usable_key(name) for name in LANGFUSE_SECRETS):
+        return None
+    try:
+        from langfuse.langchain import CallbackHandler
+
+        return CallbackHandler()
+    except Exception:  # noqa: BLE001 - tracing is optional; never fail a turn for it
+        return None
+
+
+def langfuse_config(state: TurnState) -> dict[str, Any]:
+    """LangGraph ``invoke`` config that traces this turn, or ``{}`` if unconfigured.
+
+    One callback on the invocation captures the whole chain - LangChain propagates
+    it down into every node and every nested model call - so no node needs its own
+    instrumentation. The ``langfuse_*`` metadata keys are the SDK's contract for
+    attributing a trace's tokens and cost to a user and a session; ``imdb_trace_id``
+    joins the Langfuse trace back to the ``TurnTrace`` row that owns it.
+    """
+    handler = langfuse_handler()
+    if handler is None:
+        return {}
+    metadata: dict[str, Any] = {
+        "langfuse_session_id": state.session_id,
+        "imdb_trace_id": state.trace_id,
+    }
+    if state.user_id:
+        metadata["langfuse_user_id"] = state.user_id
+    return {"callbacks": [handler], "metadata": metadata}
 
 
 def serialize_trace(
