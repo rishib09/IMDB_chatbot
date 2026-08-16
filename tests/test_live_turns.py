@@ -90,11 +90,16 @@ def handler(live_resources):
 def retry_scenario(live_resources):
     """Run a whole search scenario on a fresh session, retrying a model wobble.
 
-    Even at temperature 0, OpenRouter occasionally serves a generation that
-    Gate-4 rejects (ungrounded prose), turning a good search turn into the
-    fallback. That is provider nondeterminism, not a code regression, so a
-    scenario gets up to three fresh-session attempts; a genuine regression
-    still fails every attempt and surfaces the last diagnostic.
+    This existed because Gate-4 rejected good generations; ticket #89 removed
+    the two false-reject classes (a year echoed from the query, and a title
+    spelled with different punctuation/accents), so that is no longer the
+    reason. It survives for the residual the fix does not touch: OpenRouter
+    itself failing or returning unparseable output, which is 9 of the 111
+    recorded turns (8.1%, ``degradation`` containing ``generate_error``), plus
+    turns that legitimately retrieve nothing. Three fresh-session attempts take
+    that to ~0.05% per scenario; a genuine regression still fails every attempt
+    and surfaces the last diagnostic. Delete this only once a live tier that
+    never trips it has been observed - not on the strength of #89 alone.
     """
 
     def run(scenario, attempts: int = 3) -> None:
@@ -188,9 +193,10 @@ def test_overlapping_refine_refills_from_the_unseen_pool(retry_scenario) -> None
     # films are all post-2005) used to strand: the cap ran before the shown
     # filter. Excluding shown titles inside the retriever (ticket #88) refills
     # the slots with the next unseen films instead. Phrased as a narrowing so
-    # the follow-up router treats it as REFINE (keeps ``shown_movies``); the
-    # bound is a year that exists in the refilled pool (The Prestige, 2006) so
-    # Gate-4's fact-grounding does not reject prose that echoes the query.
+    # the follow-up router treats it as REFINE (keeps ``shown_movies``). The
+    # bound used to have to be a year present in the refilled pool, because
+    # prose echoing it was rejected as ``ungrounded_year``; ticket #89 grounds
+    # query years, so any bound is now safe.
     def scenario(handler) -> None:
         first = handler("recommend some christopher nolan movies")
         assert first.rec.picks, _describe(first)
@@ -235,6 +241,10 @@ def test_failed_turn_does_not_poison_the_next_search(retry_scenario) -> None:
         assert second.rec.picks, _describe(first) + " || " + _describe(second)
         titles = {p.title for p in second.rec.picks}
         assert titles & NOLAN_FILMS, _describe(first) + " || " + _describe(second)
+
+    retry_scenario(scenario)
+
+
 def test_nationality_phrased_search_returns_picks(retry_scenario) -> None:
     # Ticket #84: the extractor emits region='korean' (not 'KR'), plus a
     # non-genre 'revenge' and a non-title similar_to; unnormalized, that

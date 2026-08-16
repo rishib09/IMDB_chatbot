@@ -150,6 +150,10 @@ class TurnState(BaseModel):
     # Machine-readable Gate-4 violation from the last validate; appended to the
     # regeneration prompt so the model is told exactly what to fix (ticket #19).
     validation_reason: str | None = None
+    # EVERY violation this turn, in order, kept for the trace: the field above is
+    # overwritten (and cleared on a clean regen), so it cannot answer "what did
+    # Gate-4 reject?" after the fact (ticket #89).
+    gate4_rejects: list[str] = []
     degradation: list[str] = []
 
 
@@ -168,6 +172,7 @@ class TurnTrace(BaseModel):
     path_taken: list[str] = []
     extract_retries: int = 0
     gen_retries: int = 0
+    gate4_rejects: list[str] = []  # every validate violation, in order (ticket #89)
     timings_ms: dict[str, float] = {}
     token_usage: dict[str, int] = {}
     cost_usd: float = 0.0

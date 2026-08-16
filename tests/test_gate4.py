@@ -146,6 +146,89 @@ def test_correct_cast_in_prose_passes() -> None:
     assert check_fact_grounding(response, [_record()]) is None
 
 
+# -- (d) ticket #89 false rejects: what Gate-4 must NOT reject ----------------
+
+
+def test_prose_echoing_a_year_from_the_query_passes() -> None:
+    """Attacks: "every 4-digit year in the prose is training-knowledge leakage".
+
+    Broken by a refine: "only the ones from 2006 onward" over a candidate pool
+    whose years are all 2014+. The prose restates the user's own bound, no
+    candidate is from 2006, and Gate-4 called it ``ungrounded_year``. 5 of the 9
+    year-bearing queries in the 111 recorded traces were in exactly this shape.
+    """
+    response = _rec([_pick()], prose="All of these are from 2006 onward.")
+
+    assert check_fact_grounding(response, [_candidate()]) == "ungrounded_year:2006"
+    assert check_fact_grounding(response, [_candidate()], "only the ones from 2006 onward") is None
+    assert run_gate4(response, [_candidate()], query="from 2006 onward").ok is True
+
+
+def test_year_in_neither_query_nor_candidates_is_still_rejected() -> None:
+    """Attacks: "allowing query years opens a hole in year grounding".
+
+    The user asks about 2006; the model volunteers an unrelated 1994. Widening
+    the allowed set by the query must not admit years the query never named.
+    """
+    response = _rec([_pick()], prose="From 2006 onward; a bit like his 1994 debut.")
+
+    result = run_gate4(response, [_candidate()], query="only the ones from 2006 onward")
+    assert result.ok is False
+    assert result.reason == "ungrounded_year:1994"
+
+
+def test_title_matches_across_case_punctuation_and_diacritics() -> None:
+    """Attacks: "a pick title that is not byte-equal to a candidate was invented".
+
+    Broken by rendering, not invention: the catalog holds "Amelie" accented,
+    "WALL-E" with an interpunct and an en dash in "Episode IV - A New Hope";
+    a model writing the plain-ASCII form has hallucinated nothing. 23.5% of the
+    46,364 corpus titles differ from their folded key, and 35 of 111 recorded
+    turns carried at least one such title in the candidate set.
+    """
+    candidates = [
+        _candidate(1, "Amélie", 2001),
+        _candidate(2, "WALL·E", 2008),
+        _candidate(3, "Star Wars: Episode IV – A New Hope", 1977),
+        _candidate(4, "Don’t Look Up", 2021),
+    ]
+    picks = [
+        _pick("Amelie", 2001),
+        _pick("WALL-E", 2008),
+        _pick("star wars: episode iv - a new hope", 1977),
+        _pick("Don't Look Up", 2021),
+    ]
+
+    assert check_titles_exist(_rec(picks, ""), candidates) is None
+
+
+def test_invented_title_is_still_rejected_under_the_folded_key() -> None:
+    """Attacks: "folding punctuation lets any nearby string count as grounded".
+
+    A sequel that was never retrieved, and a real film that is simply not a
+    candidate, must both still fail - folding case and punctuation must not
+    fold away the difference between two different films.
+    """
+    candidates = [_candidate(1, "Amélie", 2001)]
+
+    for invented in ("John Wick 5", "Amélie 2", "Amos"):
+        result = run_gate4(_rec([_pick(invented)], ""), candidates)
+        assert result.ok is False, invented
+        assert result.reason.startswith("hallucinated_title:"), invented
+
+
+def test_violation_token_keeps_punctuation_while_matching_folds_it() -> None:
+    """Attacks: "matching and reporting can share one normalizer".
+
+    ``tests/test_text.py`` pins ``hallucinated_title:<punctuation-preserving>``
+    as a machine-readable contract. The looser MATCH key must not leak into the
+    REPORTED token, or every downstream reader of that token sees a new string.
+    """
+    result = run_gate4(_rec([_pick("Spider-Man: No Way Home")], ""), [_candidate()])
+
+    assert result.reason == "hallucinated_title:spider-man: no way home"
+
+
 def test_director_grounding_skipped_without_metadata() -> None:
     # ScoredMovie carries no director, so name grounding is a documented no-op:
     # only the year check has signal here.
@@ -219,6 +302,11 @@ def test_section_7_5_worked_example_regen_then_clean() -> None:
     # Final answer is clean: Gate-4 passes and the excluded actor is gone.
     assert result.state.validation_failed is False
     assert result.state.validation_reason is None
+    # ...but the turn still REMEMBERS why it had to regenerate. ``validation_reason``
+    # is cleared by the clean pass, so without this the trace of a recovered turn
+    # says nothing about the rejection (ticket #89).
+    assert result.state.gate4_rejects == ["excluded_actor:tom cruise"]
+    assert result.trace.gate4_rejects == ["excluded_actor:tom cruise"]
     assert result.state.response is not None
     assert "tom cruise" not in result.state.response.prose.casefold()
     assert len(result.state.response.picks) == 1
