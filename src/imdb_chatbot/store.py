@@ -17,9 +17,11 @@ Design constraints (from ticket #12):
   there is no queue, no writer thread, and no unbounded wait.
 - Reads use a separate, read-only connection (WAL allows concurrent reads).
 
-Rich objects (``TurnTrace``, ``ChangeRecord``) are stored as JSON via
-``model_dump_json()`` in a ``data`` column, alongside a few extracted columns
-(trace_id, ts, session_id, ...) for cheap querying/indexing.
+Rich objects (``TurnTrace``, ``ChangeRecord``, ``MovieRecord``) are stored as
+JSON via ``model_dump_json()`` in a ``data`` column, alongside a few extracted
+columns (trace_id, ts, session_id, ...) for cheap querying/indexing. The catalog
+additionally exposes every ``MovieRecord`` field as a generated column so a
+human can read it without decoding JSON - see ``_ensure_movie_columns``.
 """
 
 from __future__ import annotations
@@ -31,7 +33,7 @@ import threading
 from collections.abc import Callable, Iterator, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, Self, get_args, get_origin
 
 from .schemas import ChangeRecord, MovieRecord, TurnTrace
 
@@ -73,6 +75,61 @@ CREATE TABLE IF NOT EXISTS cache (
 CREATE INDEX IF NOT EXISTS idx_traces_session ON traces (session_id);
 CREATE INDEX IF NOT EXISTS idx_traces_ts ON traces (ts);
 """
+
+# -- catalog read surface (ticket #60) -----------------------------------------
+#
+# ``movies.data`` stays the single source of truth; every other ``MovieRecord``
+# field is exposed as a VIRTUAL generated column so the catalog can be browsed,
+# sorted and filtered in any DB viewer without decoding JSON. The columns are
+# derived, never dual-written, so they cannot drift from the blob. The set is
+# built from ``MovieRecord.model_fields``: a field added to the model becomes a
+# column with no schema edit, on new *and* existing corpora alike.
+#
+# Requires SQLite >= 3.31 (generated columns; only VIRTUAL ones can be added by
+# ALTER TABLE, which is what lets an existing corpus upgrade in place with no
+# table rewrite). ``tests/test_store.py`` asserts the running version.
+
+_MOVIE_STORED_COLUMNS = frozenset({"tmdb_id", "title", "year", "data"})
+
+
+def _movie_column_ddl(field: str, ann: Any) -> str:
+    """Column definition for one derived catalog field, chosen by annotation."""
+    expr = f"json_extract(data, '$.{field}')"
+    if get_origin(ann) is list:
+        # A generated column may not use a subquery, so json_each() is out; join
+        # the raw array text instead. '","' only ever separates two elements -
+        # a quote inside one is escaped as \" - so the split cannot misfire.
+        expr = (
+            f"""CASE {expr} WHEN '[]' THEN '' ELSE replace(replace(replace("""
+            f"""{expr}, '","', ' | '), '["', ''), '"]', '') END"""
+        )
+        sql_type = "TEXT"
+    else:
+        # Numeric affinity matters: under TEXT affinity `WHERE vote_count > 1000`
+        # would compare strings and match every row.
+        inner = [a for a in get_args(ann) if a is not type(None)] or [ann]
+        sql_type = "INTEGER" if inner == [int] else "REAL" if inner == [float] else "TEXT"
+    return f'"{field}" {sql_type} GENERATED ALWAYS AS ({expr}) VIRTUAL'
+
+
+_MOVIE_DERIVED_COLUMNS = {
+    name: _movie_column_ddl(name, f.annotation)
+    for name, f in MovieRecord.model_fields.items()
+    if name not in _MOVIE_STORED_COLUMNS
+}
+
+
+def _ensure_movie_columns(conn: sqlite3.Connection) -> None:
+    """Add every missing derived catalog column; idempotent across opens.
+
+    ``PRAGMA table_info`` does NOT list generated columns - only ``table_xinfo``
+    does - so the existence check must use xinfo, or each open would re-ADD them
+    and fail with "duplicate column name".
+    """
+    have = {row["name"] for row in conn.execute("PRAGMA table_xinfo(movies)")}
+    for name, ddl in _MOVIE_DERIVED_COLUMNS.items():
+        if name not in have:
+            conn.execute(f"ALTER TABLE movies ADD COLUMN {ddl}")
 
 
 class TraceStore:
@@ -122,6 +179,7 @@ class TraceStore:
     def init_schema(self) -> None:
         def _do(conn: sqlite3.Connection) -> None:
             conn.executescript(_SCHEMA)
+            _ensure_movie_columns(conn)
 
         self._submit(_do)
 
