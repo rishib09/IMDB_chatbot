@@ -276,15 +276,15 @@ def test_format_report_is_ascii(retriever: HybridRetriever) -> None:
 # token, decides where each single relevant id lands - but the corpus + stub are
 # fully deterministic, so these are fixed constants. Hand-derived metrics:
 #   recall@k = hit@k = 1 once k reaches the rank; reciprocal rank = 1/rank.
-# q1 ranked=[2,10,6,5,3,12,1,...]   -> id 1  at rank 7
-# q2 ranked=[1,4,3,2,8,...]         -> id 8  at rank 5
-# q3 ranked=[10,2,6,7,...]          -> id 7  at rank 4
-# q4 ranked=[4,13,...]              -> id 13 at rank 2
-# q5 ranked=[9,...]                 -> id 9  at rank 1
+#
+# StubEmbedder seeds its RNG with sha256(composed text), so these constants are
+# an artifact of the exact string ``compose_text`` emits and MOVE whenever that
+# string changes - they say nothing about real retrieval quality. Last re-observed
+# for the #83 plot-before-cast composition (they were 7/5/4/2/1 before it).
 EXPECTED_FIRST_RANK: dict[str, int] = {
-    "q1": 7,
+    "q1": 5,
     "q2": 5,
-    "q3": 4,
-    "q4": 2,
-    "q5": 1,
+    "q3": 1,
+    "q4": 1,
+    "q5": 3,
 }

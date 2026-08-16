@@ -15,18 +15,21 @@ import numpy as np
 import pytest
 
 from imdb_chatbot.index.build import (
+    CAST_IN_TEXT,
     CHUNK_POLICY_V1,
     build_index,
     compose_text,
     dense_search,
     embed_query,
     load_index,
+    over_budget,
     version_stamp,
     write_live_pointer,
 )
 from imdb_chatbot.index.cache import EmbeddingCache, cache_key, embed_cached
 from imdb_chatbot.index.embedder import StubEmbedder, l2_normalize
-from imdb_chatbot.schemas import MovieRecord
+from imdb_chatbot.retrieval.retrieve import _passes_filters
+from imdb_chatbot.schemas import MovieRecord, ParsedQuery
 from imdb_chatbot.store import TraceStore
 
 HAS_FAISS = importlib.util.find_spec("faiss") is not None
@@ -127,9 +130,75 @@ def test_compose_text_chunk_policy_v1() -> None:
         "Inception (2010). "
         "Genre: Sci-Fi, Thriller. "
         "Director: Christopher Nolan. "
-        "Cast: Leonardo DiCaprio, Joseph Gordon-Levitt. "
-        "Plot: A thief enters dreams to plant an idea."
+        "Plot: A thief enters dreams to plant an idea. "
+        "Cast: Leonardo DiCaprio, Joseph Gordon-Levitt"
     )
+
+
+def test_plot_offset_is_independent_of_cast_size() -> None:
+    """Attacks: 'the plot sits at a bounded offset in the embedded text.'
+
+    This is the exact mechanism of #83. Cast used to precede the plot and was
+    unbounded, so one 396-name cast pushed 'Plot:' past token 1,750 of a
+    256-token window and the synopsis never reached the vector. Attack it with a
+    cast far larger than anything in the corpus: the plot's offset must not move.
+    """
+    base = _movies()[0]
+    small = base.model_copy(update={"cast": ["A. Actor"]})
+    huge = base.model_copy(update={"cast": [f"Extra {i:04d}" for i in range(5000)]})
+
+    small_text, huge_text = compose_text(small), compose_text(huge)
+    assert small_text.index("Plot: ") == huge_text.index("Plot: ")
+    # And the whole plot survives verbatim regardless of cast size.
+    assert base.plot in huge_text
+    # Cast trails the plot, so overflow eats actor names and never the synopsis.
+    assert huge_text.index("Plot: ") < huge_text.index("Cast: ")
+
+
+def test_embedded_cast_is_capped_but_the_record_is_not() -> None:
+    """Attacks: 'capping the cast in the embedded text weakens exclusion.'
+
+    #83 caps cast INSIDE compose_text only. Exclusion filtering and the actor
+    index read ``MovieRecord.cast``, which must stay complete - otherwise a film
+    stops being excluded once its excluded actor is billed 40th, silently
+    breaking the exclusion-precision guarantee the pipeline advertises.
+    """
+    cast = [f"Star {i:02d}" for i in range(40)] + ["Buried Villain"]
+    movie = _movies()[0].model_copy(update={"cast": cast})
+
+    text = compose_text(movie)
+    assert "Buried Villain" not in text  # capped out of the embedded text
+    assert text.count("Star ") == CAST_IN_TEXT  # exactly the top-billed ten
+    assert movie.cast == cast  # ...but the record is untouched
+
+    parsed = ParsedQuery(exclude_actors=["Buried Villain"])
+    assert not _passes_filters(movie, parsed, frozenset())
+    # The actor-index path must find him too, not just the exclusion path.
+    parsed_actor = ParsedQuery(actor="Buried Villain")
+    assert _passes_filters(movie, parsed_actor, frozenset())
+
+
+class _WindowedEmbedder(StubEmbedder):
+    """StubEmbedder that declares a word-counted context window."""
+
+    max_tokens = 5
+
+    def count_tokens(self, texts: list[str]) -> list[int]:
+        return [len(t.split()) for t in texts]
+
+
+def test_over_budget_reports_every_clipped_row_and_no_others() -> None:
+    """Attacks: 'the build's clipped-row report is complete and exact.'
+
+    An off-by-one (``>=`` instead of ``>``) would flag a text that fits exactly,
+    and a text one token over would be dropped from the report - which is how a
+    silent truncation returns wearing a report's clothes. Sit inputs on both
+    sides of the boundary.
+    """
+    texts = ["a b c d", "a b c d e", "a b c d e f", "x"]  # 4, 5, 6, 1 words
+    assert over_budget(_WindowedEmbedder(dim=8), texts) == [2]
+    # An embedder that declares no window must report nothing, not crash.
+    assert over_budget(StubEmbedder(dim=8), texts) == []
 
 
 # -- normalization ------------------------------------------------------------
@@ -370,3 +439,46 @@ def test_build_rerun_is_cache_hot(store: TraceStore, tmp_path: Path) -> None:
         assert embedder.calls == 0
     finally:
         cache.close()
+
+
+# -- the real corpus, the real tokenizer (live tier) --------------------------
+
+
+@pytest.mark.live
+def test_no_movie_in_the_corpus_loses_its_plot_to_the_window(
+    live_corpus_path: Path,
+) -> None:
+    """Attacks: 'every movie's plot reaches the vector' - on all 46,364 real rows.
+
+    The synthetic guards above fix the mechanism; only the corpus proves the
+    fleet is clean. Before #83 this failed for 2,779 movies whose plot began
+    past the 256-token window, plus 3,929 more cut mid-sentence. Residual
+    clipping (a plot that alone exceeds the window) must stay a reported
+    handful, not a silent majority.
+    """
+    from imdb_chatbot.index.embedder import SentenceTransformerEmbedder
+
+    embedder = SentenceTransformerEmbedder()
+    store = TraceStore(live_corpus_path)
+    try:
+        movies = store.read_all_movies()
+    finally:
+        store.close()
+
+    texts = [compose_text(m) for m in movies]
+    # Where does the plot START? Everything before it is fixed-size overhead now.
+    prefixes = [t[: t.index("Plot: ")] for t in texts]
+    prefix_tokens = embedder.count_tokens(prefixes)
+
+    lost = [
+        m.tmdb_id
+        for m, n in zip(movies, prefix_tokens, strict=True)
+        if n >= embedder.max_tokens
+    ]
+    assert lost == [], f"{len(lost)} movies still lose their whole plot"
+
+    # Residual: plots too long to fit even when they lead. Reported, not silent.
+    clipped = over_budget(embedder, texts)
+    assert len(clipped) < len(movies) * 0.02, (
+        f"{len(clipped)}/{len(movies)} texts exceed the window - the cap regressed"
+    )

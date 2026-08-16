@@ -126,6 +126,19 @@ class SentenceTransformerEmbedder:
     def dim(self) -> int:
         return self._dim
 
+    @property
+    def max_tokens(self) -> int:
+        """Hard input window - everything past it is dropped, not compressed.
+
+        256 for all-MiniLM-L6-v2. ``index.build.over_budget`` reads this to
+        report which movies the window truncates (ticket #83).
+        """
+        return int(self._model.max_seq_length)
+
+    def count_tokens(self, texts: list[str]) -> list[int]:
+        """Tokens per text as the window counts them (special tokens included)."""
+        return [len(ids) for ids in self._model.tokenizer(texts)["input_ids"]]
+
     def encode(self, texts: list[str]) -> np.ndarray:
         vectors = self._model.encode(
             texts, convert_to_numpy=True, normalize_embeddings=False
