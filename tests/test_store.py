@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from datetime import UTC, datetime
@@ -178,6 +179,94 @@ def test_read_connection_has_busy_timeout(store: TraceStore) -> None:
     with store._read_lock:
         timeout = store._read_conn.execute("PRAGMA busy_timeout;").fetchone()[0]
     assert timeout == store._busy_timeout_ms
+
+
+def _catalog_columns(store: TraceStore) -> set[str]:
+    """Column names as a DB viewer sees them - ``table_info`` hides generated ones."""
+    with store._read_lock:
+        return {r["name"] for r in store._read_conn.execute("PRAGMA table_xinfo(movies)")}
+
+
+def test_every_movie_record_field_is_a_catalog_column(store: TraceStore) -> None:
+    """Attacks: "the catalog's read surface tracks ``MovieRecord``" - broken the
+    moment a field is added to the model and not to the schema, which is exactly
+    how the blob became unreadable. Expectations come from the model itself, so
+    this cannot be satisfied by editing a list in the test."""
+    assert sqlite3.sqlite_version_info >= (3, 31), "generated columns need SQLite >= 3.31"
+    assert set(MovieRecord.model_fields) <= _catalog_columns(store)
+
+
+def test_generated_columns_agree_with_the_blob(store: TraceStore) -> None:
+    """Attacks: "a derived column reproduces its field" - broken by a list element
+    holding '","' or a pipe (the join is a text replace, not a parser), by an
+    empty list, and by TEXT affinity turning ``vote_count > 1000`` into a string
+    compare that matches every row."""
+    hostile = MovieRecord(
+        tmdb_id=7,
+        title="Hostile",
+        year=1999,
+        genres=[],
+        cast=["Ann O'Neil", 'Bob "Rex" Lee', 'X","Y', "Pipe|Man", "Ωmega"],
+        regions=["US", "KR"],
+        rating_z={"US": 0.4, "KR": 1.2},
+        vote_count=5,
+        duration_min=98.5,
+    )
+    store.write_movie(hostile)
+    store.write_movie(hostile.model_copy(update={"tmdb_id": 8, "vote_count": 5000}))
+    with store._read_lock:
+        row = store._read_conn.execute(
+            'SELECT genres, "cast", regions, rating_z, duration_min, director '
+            "FROM movies WHERE tmdb_id = 7"
+        ).fetchone()
+        loud = store._read_conn.execute(
+            "SELECT tmdb_id FROM movies WHERE vote_count > 1000"
+        ).fetchall()
+    assert row["genres"] == "", "empty list should render blank, not '[]'"
+    # each element as its JSON text, so a hostile one cannot silently split
+    escaped = [json.dumps(c, ensure_ascii=False)[1:-1] for c in hostile.cast]
+    assert row["cast"].split(" | ") == escaped
+    assert "Ωmega" in row["cast"], "non-ASCII should stay readable, not \\uXXXX"
+    assert row["regions"] == "US | KR"
+    assert row["rating_z"] == '{"US":0.4,"KR":1.2}'
+    assert row["duration_min"] == 98.5
+    assert row["director"] is None
+    assert [r["tmdb_id"] for r in loud] == [8], "numeric column lost its affinity"
+    assert store.read_movie(7) == hostile, "accessors changed behaviour"
+
+
+def test_pre_existing_corpus_gains_columns_on_open(tmp_path: Path) -> None:
+    """Attacks: "an existing .db upgrades itself, repeatably" - broken if the
+    columns only appear at CREATE TABLE (every corpus on disk stays a blob), if
+    the check uses ``PRAGMA table_info`` (which hides generated columns, so a
+    second open re-ADDs them and raises), or if a column added to the model later
+    never reaches a database that already exists - simulated here by dropping one.
+    """
+    path = tmp_path / "old.sqlite"
+    old = sqlite3.connect(path)  # the pre-#60 schema, verbatim
+    old.execute(
+        "CREATE TABLE movies (tmdb_id INTEGER PRIMARY KEY, title TEXT, "
+        "year INTEGER, data TEXT NOT NULL)"
+    )
+    rec = MovieRecord(tmdb_id=1, title="Old", year=1980, genres=["Drama", "War"])
+    old.execute(
+        "INSERT INTO movies (tmdb_id, title, year, data) VALUES (?, ?, ?, ?)",
+        (1, rec.title, rec.year, rec.model_dump_json()),
+    )
+    old.commit()
+    old.close()
+
+    for _ in range(2):  # idempotent: a second open must not raise
+        with TraceStore(path) as s:
+            assert set(MovieRecord.model_fields) <= _catalog_columns(s)
+            assert s.count_movies() == 1, "no re-ingest or backfill happened"
+            with s._read_lock:
+                assert s._read_conn.execute("SELECT genres FROM movies").fetchone()[0] == (
+                    "Drama | War"
+                )
+        with sqlite3.connect(path) as c:
+            c.execute('ALTER TABLE movies DROP COLUMN "genres"')  # stands in for
+            c.commit()  # "the model gained a field after this corpus was written"
 
 
 def test_ingest_writes_while_build_reads_under_wal(tmp_path: Path) -> None:
