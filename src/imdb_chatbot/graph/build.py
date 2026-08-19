@@ -41,7 +41,7 @@ from ..store import TraceStore
 from .gate4 import run_gate4
 from .models import GraphModels
 from .normalize import CorpusVocab, normalize_parsed
-from .tracing import TraceCollector, serialize_trace, traced
+from .tracing import TraceCollector, langfuse_config, serialize_trace, traced
 from .usage import UsageMeter
 
 # Injected retriever: (rewritten_query, parsed, shown_movies) -> ranked candidates.
@@ -459,10 +459,14 @@ def run_turn(
     turns. When ``store`` is provided the resulting trace is persisted (the trace
     is the system-of-record for the turn). When a ``usage`` meter is supplied its
     token totals and cost are folded into the trace. Returns state and trace.
+
+    ``langfuse_config`` adds the Langfuse callback to the invocation when the
+    credentials are present (ticket #66) and is ``{}`` otherwise, so an
+    unconfigured or unreachable Langfuse changes nothing about the turn.
     """
     collector = TraceCollector()
     graph = build_graph(retriever=retriever, models=models, collector=collector, vocab=vocab)
-    result = graph.invoke(state)
+    result = graph.invoke(state, config=langfuse_config(state))
     final = TurnState.model_validate(result)
     trace = serialize_trace(
         final, collector, versions=versions, usage=usage, pricing=pricing
