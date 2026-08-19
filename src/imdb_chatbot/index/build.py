@@ -22,8 +22,10 @@ them, so importing this module never requires faiss or torch.
 from __future__ import annotations
 
 import json
+import logging
 import pickle
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -36,6 +38,8 @@ from ..store import TraceStore
 from .cache import EmbeddingCache, embed_cached
 from .embedder import Embedder, l2_normalize
 
+logger = logging.getLogger(__name__)
+
 CHUNK_POLICY_V1 = "v1_one_per_movie"
 
 DEFAULT_INDEX_ROOT = Path("data") / "index"
@@ -43,19 +47,49 @@ DEFAULT_CACHE_PATH = Path("data") / "embedding_cache.sqlite"
 LIVE_INDEX_PATH = CONFIG_DIR / "live_index.json"
 
 
+# Embedders truncate at a fixed context window (all-MiniLM-L6-v2: 256 tokens).
+# Cast used to lead and was unbounded, so the plot fell off the end for 6,708 of
+# 46,364 movies (14.5%) - 2,779 lost it entirely - and the bias was toward big
+# productions: 86 of the 100 highest-vote_count films were affected. Plot now
+# leads, and only the top-billed CAST_IN_TEXT names ride along.
+#
+# This caps the EMBEDDED TEXT ONLY. ``MovieRecord.cast`` stays complete, because
+# exclusion filtering and the actor index read that field, not this string (see
+# ``retrieval.retrieve._passes_filters``). Conflating the two caused the defect.
+CAST_IN_TEXT = 10
+
+
 def compose_text(movie: MovieRecord) -> str:
-    """Chunk policy ``v1_one_per_movie``: one movie -> one chunk of text."""
+    """Chunk policy ``v1_one_per_movie``: one movie -> one chunk of text.
+
+    Ordered by what the window must never lose: plot first, cast last, so an
+    over-long text loses trailing actor names rather than the whole synopsis.
+    """
     genres = ", ".join(movie.genres)
-    cast = ", ".join(movie.cast)
+    cast = ", ".join(movie.cast[:CAST_IN_TEXT])
     director = movie.director or ""
     plot = movie.plot or ""
     return (
         f"{movie.title} ({movie.year}). "
         f"Genre: {genres}. "
         f"Director: {director}. "
-        f"Cast: {cast}. "
-        f"Plot: {plot}"
+        f"Plot: {plot} "
+        f"Cast: {cast}"
     )
+
+
+def over_budget(embedder: Embedder, texts: Sequence[str]) -> list[int]:
+    """Row indices whose text the embedder will clip at its context window.
+
+    Empty for embedders that declare no window (the stub; the hosted models,
+    whose 8k window no composed text approaches). 48 movies have a synopsis that
+    alone exceeds the 256-token window, so ordering cannot save every tail - but
+    that loss is now counted and reported instead of silent.
+    """
+    limit = getattr(embedder, "max_tokens", 0)
+    if not limit:
+        return []
+    return [i for i, n in enumerate(embedder.count_tokens(list(texts))) if n > limit]
 
 
 _TOKEN_RE = re.compile(r"\w+")
@@ -151,6 +185,19 @@ def build_index(
     tmdb_ids = [m.tmdb_id for m in movies]
     texts = [compose_text(m) for m in movies]
 
+    # Report what the window will eat, rather than losing it silently (#83).
+    clipped = over_budget(embedder, texts)
+    if clipped:
+        logger.warning(
+            "%d/%d composed texts exceed the %d-token window of %s; their trailing "
+            "cast names (and, for a few very long synopses, the plot tail) are "
+            "dropped by the model. Row indices recorded in sidecar.json.",
+            len(clipped),
+            len(texts),
+            embedder.max_tokens,
+            embedder.name,
+        )
+
     # Dense side: embed (cached) then L2-normalize so IP == cosine.
     raw = embed_cached(embedder, texts, cache)
     vectors = l2_normalize(raw)
@@ -179,6 +226,10 @@ def build_index(
         "chunk_policy": chunk_policy,
         "count": len(movies),
         "created_utc": datetime.now(UTC).isoformat(),
+        # Movies the embedder's window clipped - auditable without re-running
+        # the build, per the "inspectable without running code" constraint.
+        "clipped_count": len(clipped),
+        "clipped_tmdb_ids": [tmdb_ids[i] for i in clipped],
         # row_index -> tmdb_id (list index IS the FAISS/BM25 row index).
         "row_to_tmdb_id": tmdb_ids,
     }
