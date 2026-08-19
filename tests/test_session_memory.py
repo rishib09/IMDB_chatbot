@@ -283,8 +283,11 @@ def test_turn_that_returned_nothing_cannot_constrain_later_turns() -> None:
     first = run_session_turn(
         conv, "a gritty korean revenge thriller", retriever=retriever, models=models, trace_id="t1"
     )
-    assert first.state.response.picks == []
-    assert conv.standing == ParsedQuery()  # a turn that returned nothing earned nothing
+    # The unsatisfiable region emptied the pool, so the turn only answered by
+    # dropping it (ticket #90). Constraints that had to be relaxed are not
+    # constraints the turn satisfied, so they earn nothing.
+    assert "relax_constraints" in first.state.path_taken
+    assert conv.standing == ParsedQuery()
 
     second = run_session_turn(
         conv, "recommend some christopher nolan movies", retriever=retriever, models=models, trace_id="t2"

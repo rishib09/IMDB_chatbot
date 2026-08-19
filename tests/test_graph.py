@@ -19,6 +19,7 @@ from imdb_chatbot.graph.build import (
     regex_extract,
 )
 from imdb_chatbot.schemas import (
+    EXCLUSION_FIELDS,
     MovieRecommendation,
     ParsedQuery,
     RecommendationSet,
@@ -241,6 +242,115 @@ def test_extract_regex_fallback_after_two_failures() -> None:
     assert result.state.path_taken[-2:] == ["generate", "validate"]
 
 
+# -- extractor flake degrades to unconstrained search (ticket #90) -------------
+
+
+def _picky_retriever(catalog: list[ScoredMovie], seen: list[ParsedQuery]):
+    """A retriever the corpus cannot satisfy: ANY positive constraint empties it.
+
+    Stands in for the real failure mode - a vibe query whose extracted
+    constraints (a hallucinated genre, the US region default) match nothing.
+    """
+
+    def retrieve(query: str, parsed: ParsedQuery, shown_movies=()) -> list[ScoredMovie]:
+        seen.append(parsed)
+        positive = parsed.model_dump(exclude_defaults=True, exclude=EXCLUSION_FIELDS)
+        return [] if positive else list(catalog)
+
+    return retrieve
+
+
+def test_extractor_formatting_failure_still_returns_movies() -> None:
+    """Attacks: "the regex fallback leaves the turn with a USABLE parse".
+
+    It does not. For a vibe-phrased query the regex extractor finds no genre and
+    no year, and ``apply_region_default`` then stamps ``region="US"`` onto the
+    empty parse - so the degraded path searches with a constraint the user never
+    asked for. The turn must still come back with movies, not a dead end.
+    """
+    seen: list[ParsedQuery] = []
+    models = _good_models()
+
+    def always_fail(query: str) -> ParsedQuery:
+        raise ValueError("model dropped the structured output")
+
+    models.extract = always_fail
+
+    result = run_turn(
+        _initial_state("feel-good animated movies"),
+        retriever=_picky_retriever([_candidate()], seen),
+        models=models,
+    )
+
+    # The regex fallback really did hand retrieval an unasked-for constraint.
+    assert seen[0].region == "US"
+    # ...and the turn degraded past it to an unconstrained semantic search.
+    assert "extract_regex_fallback" in result.state.degradation
+    assert "relax_constraints" in result.state.path_taken
+    assert result.state.response is not None
+    assert result.state.response.picks  # never an empty result
+    assert "fallback" not in result.state.degradation
+
+
+def test_clean_parse_with_unsatisfiable_constraints_still_returns_movies() -> None:
+    """Attacks: "an extraction that raises no error produced usable constraints".
+
+    The flake has no error signal here: the extractor returns a well-formed
+    ``ParsedQuery`` whose genre simply does not exist in the corpus. Nothing in
+    the state says so - ``extract_failed`` is False - so the degrade cannot be
+    keyed off the extractor's own report of success.
+    """
+    seen: list[ParsedQuery] = []
+    models = _good_models()
+    models.extract = lambda query: ParsedQuery(genres=["Feelgood"], min_rating=9.9)
+
+    result = run_turn(
+        _initial_state("feel-good animated movies"),
+        retriever=_picky_retriever([_candidate()], seen),
+        models=models,
+    )
+
+    assert result.state.extract_failed is False  # no failure signal to route on
+    assert "Feelgood" in seen[0].genres
+    assert "relax_constraints" in result.state.path_taken
+    assert result.state.response is not None
+    assert result.state.response.picks
+
+
+def test_relaxation_keeps_exclusions_and_a_named_person() -> None:
+    """Attacks: "an unconstrained retry may drop every field of the parse".
+
+    Dropping everything would leak an excluded actor back into the pool and turn
+    the honest "no films by X in my catalog" answer (#50) into five unrelated
+    movies. Exclusions and a named person are user-stated, so they survive.
+    """
+    seen: list[ParsedQuery] = []
+    models = _good_models()
+    models.extract = lambda query: ParsedQuery(
+        director="Nonexistent Person",
+        genres=["Drama"],
+        exclude_actors=["Tom Cruise"],
+        exclude_genres=["Horror"],
+    )
+
+    result = run_turn(
+        _initial_state("dramas by nonexistent person, no tom cruise"),
+        retriever=_picky_retriever([_candidate()], seen),
+        models=models,
+    )
+
+    relaxed = seen[-1]
+    assert relaxed.genres == []  # the extractor's guess is gone
+    assert relaxed.director == "Nonexistent Person"  # the user's request is not
+    assert relaxed.exclude_actors == ["Tom Cruise"]
+    assert relaxed.exclude_genres == ["Horror"]
+    # The person still matches nothing, so the honest fallback survives intact.
+    assert "fallback" in result.state.degradation
+    assert result.state.response is not None
+    assert result.state.response.picks == []
+    assert "Nonexistent Person" in result.state.response.prose
+
+
 # -- empty-candidates -> fallback ---------------------------------------------
 
 
@@ -251,9 +361,13 @@ def test_empty_candidates_routes_to_fallback() -> None:
         models=_good_models(),
     )
 
+    # Fallback is only reached AFTER the unconstrained retry also came back
+    # empty (ticket #90) - a genuinely empty corpus still ends honestly.
     assert result.state.path_taken == [
         "rewrite",
         "extract",
+        "retrieve",
+        "relax_constraints",
         "retrieve",
         "filter",
         "fallback",
