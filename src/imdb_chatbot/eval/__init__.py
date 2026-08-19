@@ -10,9 +10,14 @@ Public surface:
   Recall@k / Hit@k for k in {1,3,5,10}, MRR, exclusion precision, and the
   fallback rate. Recall is a measured LOWER BOUND, never asserted.
 
+The golden set itself is data in the repo (ticket #68): ``eval/labels.jsonl``
+(52 anchored rows) and ``eval/multiturn/*.json`` (9 scripts). Adding a case is
+appending one reviewed line.
+
 Run it against the live corpus with::
 
-    python -m imdb_chatbot.eval --db data/corpus.sqlite --labels labels.jsonl
+    python -m imdb_chatbot.eval --db data/corpus.sqlite               # retrieval only
+    python -m imdb_chatbot.eval --db data/corpus.sqlite --tier extract  # + real extractor
 
 The categories are the 8 from section 8.7: standard_semantic, exact_title,
 negation_exclusion, short, region_conditioned, numeric_filter, ambiguous,
@@ -39,6 +44,7 @@ from .harness import (
     K_VALUES,
     CategorySummary,
     EvalReport,
+    ParseFn,
     QueryResult,
     evaluate,
     format_report,
@@ -63,6 +69,7 @@ __all__ = [
     "EvalReport",
     "Invariant",
     "LabeledQuery",
+    "ParseFn",
     "QueryResult",
     "ReplayScript",
     "ReplayTurn",

@@ -1,0 +1,28 @@
+{
+  "name": "M7_progressive_narrowing",
+  "description": "Standing-constraint accumulation (#54): three successive narrowings all hold at once on turn 3 (genre AND year AND actor).",
+  "turns": [
+    {
+      "user": "comedies",
+      "invariants": [
+        {"kind": "recommends_genre", "genre": "Comedy"}
+      ]
+    },
+    {
+      "user": "from the 80s",
+      "invariants": [
+        {"kind": "parsed", "field": "genres", "contains": ["Comedy"]},
+        {"kind": "parsed", "field": "min_year", "equals": 1980}
+      ]
+    },
+    {
+      "user": "with Bill Murray",
+      "invariants": [
+        {"kind": "parsed", "field": "genres", "contains": ["Comedy"]},
+        {"kind": "parsed", "field": "min_year", "equals": 1980},
+        {"kind": "parsed", "field": "actor", "equals": "Bill Murray"},
+        {"kind": "min_picks", "n": 1}
+      ]
+    }
+  ]
+}

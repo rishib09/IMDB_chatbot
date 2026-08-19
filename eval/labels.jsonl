@@ -1,0 +1,52 @@
+{"query_id": "s01", "query": "a thief who steals secrets from inside people's dreams", "category": "standard_semantic", "relevant_tmdb_ids": [27205]}
+{"query_id": "s02", "query": "rainy neon future, a detective hunting artificial humans", "category": "standard_semantic", "relevant_tmdb_ids": [78]}
+{"query_id": "s03", "query": "a lonely writer falls in love with his computer's voice", "category": "standard_semantic", "relevant_tmdb_ids": [152601]}
+{"query_id": "s04", "query": "a shark terrorises a beach town one summer", "category": "standard_semantic", "relevant_tmdb_ids": [578]}
+{"query_id": "s05", "query": "toys that come alive when their owner leaves the room", "category": "standard_semantic", "relevant_tmdb_ids": [862]}
+{"query_id": "s06", "query": "a poor family cons its way into a rich household", "category": "standard_semantic", "relevant_tmdb_ids": [496243]}
+{"query_id": "s07", "query": "a jazz drummer pushed to breaking point by his teacher", "category": "standard_semantic", "relevant_tmdb_ids": [244786]}
+{"query_id": "s08", "query": "a man wakes up reliving the same day over and over", "category": "standard_semantic", "relevant_tmdb_ids": [137]}
+{"query_id": "e01", "query": "The Godfather", "category": "exact_title", "relevant_tmdb_ids": [238]}
+{"query_id": "e02", "query": "se7en", "category": "exact_title", "relevant_tmdb_ids": [807]}
+{"query_id": "e03", "query": "the dark knight", "category": "exact_title", "relevant_tmdb_ids": [155]}
+{"query_id": "e04", "query": "2001: A Space Odyssey", "category": "exact_title", "relevant_tmdb_ids": [62]}
+{"query_id": "e05", "query": "Amelie", "category": "exact_title", "relevant_tmdb_ids": [194]}
+{"query_id": "e06", "query": "Everything Everywhere All at Once", "category": "exact_title", "relevant_tmdb_ids": [545611]}
+{"query_id": "n01", "query": "sci-fi movies but nothing with Tom Cruise", "category": "negation_exclusion", "relevant_tmdb_ids": [329865], "parsed": {"genres": ["Science Fiction"], "exclude_actors": ["Tom Cruise"]}}
+{"query_id": "n02", "query": "action movies, no horror", "category": "negation_exclusion", "relevant_tmdb_ids": [76341], "parsed": {"genres": ["Action"], "exclude_genres": ["Horror"]}}
+{"query_id": "n03", "query": "a heist thriller without Brad Pitt", "category": "negation_exclusion", "relevant_tmdb_ids": [949], "parsed": {"exclude_actors": ["Brad Pitt"]}}
+{"query_id": "n04", "query": "comedies that aren't romances", "category": "negation_exclusion", "relevant_tmdb_ids": [813], "parsed": {"genres": ["Comedy"], "exclude_genres": ["Romance"]}}
+{"query_id": "n05", "query": "movies set in space but not animated", "category": "negation_exclusion", "relevant_tmdb_ids": [62], "parsed": {"exclude_genres": ["Animation"]}}
+{"query_id": "n06", "query": "thrillers with no Leonardo DiCaprio", "category": "negation_exclusion", "relevant_tmdb_ids": [807], "parsed": {"genres": ["Thriller"], "exclude_actors": ["Leonardo DiCaprio"]}}
+{"query_id": "n07", "query": "a drama about surviving in space, nothing with Sandra Bullock", "category": "negation_exclusion", "relevant_tmdb_ids": [157336], "parsed": {"exclude_actors": ["Sandra Bullock"]}}
+{"query_id": "n08", "query": "horror but not science fiction", "category": "negation_exclusion", "relevant_tmdb_ids": [694], "parsed": {"genres": ["Horror"], "exclude_genres": ["Science Fiction"]}}
+{"query_id": "n09", "query": "movies with Bill Murray but no romance", "category": "negation_exclusion", "relevant_tmdb_ids": [620], "parsed": {"actor": "Bill Murray", "exclude_genres": ["Romance"]}}
+{"query_id": "n10", "query": "crime films without Al Pacino", "category": "negation_exclusion", "relevant_tmdb_ids": [1422], "parsed": {"genres": ["Crime"], "exclude_actors": ["Al Pacino"]}}
+{"query_id": "n11", "query": "Tom Hanks movies that aren't war films", "category": "negation_exclusion", "relevant_tmdb_ids": [13], "parsed": {"actor": "Tom Hanks", "exclude_genres": ["War"]}}
+{"query_id": "n12", "query": "sci-fi from the 2010s, nothing with Matthew McConaughey", "category": "negation_exclusion", "relevant_tmdb_ids": [264660], "parsed": {"genres": ["Science Fiction"], "min_year": 2010, "max_year": 2019, "exclude_actors": ["Matthew McConaughey"]}}
+{"query_id": "h01", "query": "horror", "category": "short", "relevant_tmdb_ids": [694]}
+{"query_id": "h02", "query": "Nolan", "category": "short", "relevant_tmdb_ids": [27205]}
+{"query_id": "h03", "query": "korean thriller", "category": "short", "relevant_tmdb_ids": [670], "parsed": {"region": "KR", "genres": ["Thriller"]}}
+{"query_id": "h04", "query": "space", "category": "short", "relevant_tmdb_ids": [62]}
+{"query_id": "h05", "query": "80s comedy", "category": "short", "relevant_tmdb_ids": [620], "parsed": {"genres": ["Comedy"], "min_year": 1980, "max_year": 1989}}
+{"query_id": "r01", "query": "korean revenge thriller", "category": "region_conditioned", "relevant_tmdb_ids": [670], "parsed": {"region": "KR"}}
+{"query_id": "r02", "query": "french romantic comedy about a shy waitress in Paris", "category": "region_conditioned", "relevant_tmdb_ids": [194], "parsed": {"region": "FR"}}
+{"query_id": "r03", "query": "a cold, slow british cold war spy film", "category": "region_conditioned", "relevant_tmdb_ids": [49517], "parsed": {"region": "GB"}}
+{"query_id": "r04", "query": "spanish-language dark fantasy set during a war", "category": "region_conditioned", "relevant_tmdb_ids": [1417], "parsed": {"region": "ES"}}
+{"query_id": "r05", "query": "korean zombie movie on a train", "category": "region_conditioned", "relevant_tmdb_ids": [396535], "parsed": {"region": "KR"}}
+{"query_id": "r06", "query": "french new wave crime film", "category": "region_conditioned", "relevant_tmdb_ids": [269], "parsed": {"region": "FR"}}
+{"query_id": "f01", "query": "sci-fi movies released after 2015", "category": "numeric_filter", "relevant_tmdb_ids": [438631], "parsed": {"genres": ["Science Fiction"], "min_year": 2016}}
+{"query_id": "f02", "query": "crime films from the 1970s", "category": "numeric_filter", "relevant_tmdb_ids": [238], "parsed": {"genres": ["Crime"], "min_year": 1970, "max_year": 1979}}
+{"query_id": "f03", "query": "movies from 1999", "category": "numeric_filter", "relevant_tmdb_ids": [550], "parsed": {"min_year": 1999, "max_year": 1999}}
+{"query_id": "f04", "query": "highly rated films made before 1970", "category": "numeric_filter", "relevant_tmdb_ids": [62], "parsed": {"max_year": 1969, "min_rating": 7.9}}
+{"query_id": "f05", "query": "animated movies since 2020", "category": "numeric_filter", "relevant_tmdb_ids": [508442], "parsed": {"genres": ["Animation"], "min_year": 2020}}
+{"query_id": "f06", "query": "a dinosaur movie from the early nineties", "category": "numeric_filter", "relevant_tmdb_ids": [329], "parsed": {"min_year": 1990, "max_year": 1995}}
+{"query_id": "a01", "query": "something like Inception", "category": "ambiguous", "relevant_tmdb_ids": [157336, 11324, 77, 603], "parsed": {"similar_to": "Inception"}}
+{"query_id": "a02", "query": "a good movie for a first date", "category": "ambiguous", "relevant_tmdb_ids": [137, 153]}
+{"query_id": "a03", "query": "a classic film", "category": "ambiguous", "relevant_tmdb_ids": [289, 15]}
+{"query_id": "a04", "query": "something with a twist ending", "category": "ambiguous", "relevant_tmdb_ids": [550, 77, 11324]}
+{"query_id": "o01", "query": "what's the weather in Paris tomorrow", "category": "ood_unanswerable", "relevant_tmdb_ids": []}
+{"query_id": "o02", "query": "book me two tickets for the 7pm show", "category": "ood_unanswerable", "relevant_tmdb_ids": []}
+{"query_id": "o03", "query": "the one where Keanu Reeves plays Sherlock Holmes on Mars", "category": "ood_unanswerable", "relevant_tmdb_ids": []}
+{"query_id": "o04", "query": "a japanese animated film about a girl trapped in a spirit world", "category": "ood_unanswerable", "relevant_tmdb_ids": []}
+{"query_id": "o05", "query": "movies coming out in 2047", "category": "ood_unanswerable", "relevant_tmdb_ids": [], "parsed": {"min_year": 2047}}

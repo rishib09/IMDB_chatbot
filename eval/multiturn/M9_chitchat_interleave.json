@@ -1,0 +1,27 @@
+{
+  "name": "M9_chitchat_interleave",
+  "description": "Router isolation (#44/#54): chit-chat turns cost no retrieval and leave the search turn between them unaffected.",
+  "turns": [
+    {
+      "user": "hi",
+      "invariants": [
+        {"kind": "routes_to", "route": "CHITCHAT"},
+        {"kind": "no_retrieval"}
+      ]
+    },
+    {
+      "user": "sci-fi movies",
+      "invariants": [
+        {"kind": "routes_to", "route": "SEARCH"},
+        {"kind": "min_picks", "n": 1}
+      ]
+    },
+    {
+      "user": "thanks!",
+      "invariants": [
+        {"kind": "routes_to", "route": "CHITCHAT"},
+        {"kind": "no_retrieval"}
+      ]
+    }
+  ]
+}

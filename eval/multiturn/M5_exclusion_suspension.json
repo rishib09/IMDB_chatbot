@@ -1,0 +1,19 @@
+{
+  "name": "M5_exclusion_suspension",
+  "description": "Section 6.2 minimal precedence: a remembered exclusion YIELDS to an explicit live re-request for that same person (the exclusion is suspended for the turn, not deleted).",
+  "turns": [
+    {
+      "user": "action movies, nothing with Tom Cruise",
+      "invariants": [
+        {"kind": "constraint_holds", "exclude_actors": ["Tom Cruise"]}
+      ]
+    },
+    {
+      "user": "actually show me the Tom Cruise ones",
+      "invariants": [
+        {"kind": "precedence_complies", "actor": "Tom Cruise"},
+        {"kind": "min_picks", "n": 1}
+      ]
+    }
+  ]
+}

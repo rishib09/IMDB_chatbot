@@ -1,0 +1,19 @@
+{
+  "name": "M6_dead_end_relax",
+  "description": "Dead end -> relax (#85): an impossible constraint set returns nothing and offers a relaxation; the relaxed turn returns results and does not silently keep the impossible constraint.",
+  "turns": [
+    {
+      "user": "korean animated musicals from 1962",
+      "invariants": [
+        {"kind": "expect_fallback"}
+      ]
+    },
+    {
+      "user": "ok forget the year",
+      "invariants": [
+        {"kind": "min_picks", "n": 1},
+        {"kind": "parsed", "field": "region", "equals": "KR"}
+      ]
+    }
+  ]
+}
