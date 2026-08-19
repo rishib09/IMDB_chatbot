@@ -20,6 +20,12 @@ user message plus a set of code-verifiable INVARIANTS to assert AFTER that turn:
                            complies (section 6.2 / ticket #22 minimal precedence).
     recommends_genre / min_picks / expect_fallback - positive helpers.
 
+The golden multi-turn scripts (B3 / #68) live in ``eval/multiturn/*.json`` and use
+this same format, so ``load_scripts("eval/multiturn")`` types them today. They
+assert LIVE properties (the extracted parse, the router's decision, the prose
+answer) the fake world below cannot produce; those checkers land with the live
+runner (#106) and ``_check`` refuses them loudly until then.
+
 The RUNNER replays a script through the real single-turn graph (``run_turn``) with
 injected FAKE models and a stub retriever over a small fixed catalog - fully
 deterministic, ZERO network I/O. Session memory is carried across turns by
@@ -249,7 +255,23 @@ InvariantKind = Literal[
     "recommends_genre",
     "min_picks",
     "expect_fallback",
+    # Kinds used by the golden multi-turn scripts in ``eval/multiturn/`` (B3 /
+    # #68). They assert properties of the LIVE system - the extracted parse, the
+    # router's decision, the prose answer - that the fake catalog below does not
+    # have, so their checkers land with the live runner (#106). Declared here so
+    # the scripts are typed and a typo'd kind is rejected at load time today.
+    "parsed",
+    "routes_to",
+    "omits_genre",
+    "answers_about_pick",
+    "no_retrieval",
 ]
+
+# Kinds ``_check`` can evaluate in the deterministic fake world below. Anything
+# else is a live-runner kind: valid data, no checker yet (#106).
+LIVE_ONLY_KINDS: frozenset[str] = frozenset(
+    {"parsed", "routes_to", "omits_genre", "answers_about_pick", "no_retrieval"}
+)
 
 
 class Invariant(BaseModel):
@@ -260,7 +282,14 @@ class Invariant(BaseModel):
     exclude_actors: list[str] = []
     contains: list[str] = []
     genre: str | None = None
+    actor: str | None = None
     n: int | None = None
+    # ``parsed`` / ``answers_about_pick``: which ParsedQuery / MovieRecord field.
+    field: str | None = None
+    # ``parsed``: the value that field must equal (use ``contains`` for lists).
+    equals: object | None = None
+    # ``routes_to``: SEARCH | CHITCHAT | MOVIE_INFO.
+    route: str | None = None
 
 
 class ReplayTurn(BaseModel):
@@ -396,15 +425,21 @@ def _check_resolves_reference(inv: Invariant, ctx: _TurnContext) -> InvariantOut
 
 
 def _check_precedence_complies(inv: Invariant, ctx: _TurnContext) -> InvariantOutcome:
-    genre = inv.genre or ""
+    """The re-requested genre OR actor is no longer excluded, and is delivered."""
     parsed = ctx.state.parsed or ParsedQuery()
-    if genre in parsed.exclude_genres:
+    if inv.actor:
+        excluded, delivered = parsed.exclude_actors, [f.cast for f in ctx.recommended]
+        wanted = inv.actor
+    else:
+        excluded, delivered = parsed.exclude_genres, [f.genres for f in ctx.recommended]
+        wanted = inv.genre or ""
+    if wanted in excluded:
         return InvariantOutcome(
-            "precedence_complies", False, f"exclusion {genre!r} was NOT suspended for the live request"
+            "precedence_complies", False, f"exclusion {wanted!r} was NOT suspended for the live request"
         )
-    if not any(genre in f.genres for f in ctx.recommended):
+    if not any(wanted in have for have in delivered):
         return InvariantOutcome(
-            "precedence_complies", False, f"no {genre!r} film recommended despite the live request"
+            "precedence_complies", False, f"no {wanted!r} film recommended despite the live request"
         )
     return InvariantOutcome("precedence_complies", True, "ok")
 
@@ -442,7 +477,13 @@ _CHECKERS = {
 
 
 def _check(inv: Invariant, ctx: _TurnContext) -> InvariantOutcome:
-    return _CHECKERS[inv.kind](inv, ctx)
+    checker = _CHECKERS.get(inv.kind)
+    if checker is None:
+        raise NotImplementedError(
+            f"invariant {inv.kind!r} asserts a live-system property the fake replay "
+            "world does not have; its checker lands with the live runner (#106)"
+        )
+    return checker(inv, ctx)
 
 
 # -- session seeding + turn driver --------------------------------------------

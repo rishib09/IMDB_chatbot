@@ -1,0 +1,20 @@
+{
+  "name": "M8_topic_switch",
+  "description": "Replacement, not union (#54 route=replace): a brand-new genre request replaces the standing genre and the previous genre does not leak into the results.",
+  "turns": [
+    {
+      "user": "horror movies",
+      "invariants": [
+        {"kind": "recommends_genre", "genre": "Horror"}
+      ]
+    },
+    {
+      "user": "actually, romantic comedies",
+      "invariants": [
+        {"kind": "omits_genre", "genre": "Horror"},
+        {"kind": "parsed", "field": "genres", "contains": ["Romance"]},
+        {"kind": "min_picks", "n": 1}
+      ]
+    }
+  ]
+}

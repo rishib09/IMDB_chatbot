@@ -32,6 +32,35 @@ and index via `tests/conftest.py` - defaults are `data/corpus.sqlite` and the
 `IMDB_TEST_INDEX` - and skip with a named reason when a resource (or the
 OpenRouter key) is missing.
 
+## The golden eval set
+
+The measuring instrument lives in [`eval/`](eval/) and is plain, diffable data:
+
+| Path | What it holds |
+|------|---------------|
+| `eval/labels.jsonl` | 52 anchored single-turn cases across the 8 coverage cells - one JSON object per line, loaded by `imdb_chatbot.eval.load_labels` |
+| `eval/multiturn/*.json` | 9 multi-turn scripts, each turn carrying machine-readable invariants (the runner is #106) |
+
+**Adding a case is one step: append one line to `eval/labels.jsonl` in a PR.**
+
+```jsonl
+{"query_id": "n13", "query": "westerns but nothing with Clint Eastwood", "category": "negation_exclusion", "relevant_tmdb_ids": [68718], "parsed": {"genres": ["Western"], "exclude_actors": ["Clint Eastwood"]}}
+```
+
+`query_id` is any unused id, `category` is one of the 8 in `eval/labels.py`,
+`relevant_tmdb_ids` are the known-item answer(s) (empty for `ood_unanswerable`),
+and `parsed` is optional. `tests/test_golden_set.py` then checks the new row
+mechanically: known category, unique id, anchors that exist in the corpus, and
+labeled constraints that do not filter out their own anchor. Nothing else to
+register - the same file is what a production failure gets promoted into.
+
+Run the two tiers over it:
+
+| Tier | Command | What it measures |
+|------|---------|------------------|
+| Anchored (free, deterministic) | `python -m imdb_chatbot.eval --db data/corpus.sqlite` | Retrieval alone - the labeled constraints are handed to the retriever |
+| Extractor-in-the-loop (real spend) | `npx @dotenvx/dotenvx run -f .env -- python -m imdb_chatbot.eval --db data/corpus.sqlite --tier extract` | Query -> LLM extract -> retrieve; the delta against the anchored tier is the extraction regression |
+
 ## Configuration
 
 Versioned artifacts live under [`config/`](config/):

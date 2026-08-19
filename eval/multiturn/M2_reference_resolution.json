@@ -1,0 +1,19 @@
+{
+  "name": "M2_reference_resolution",
+  "description": "Section 7.5: an ordinal reference resolves against the previous turn's list and is answered as a factual question about THAT film, not a new search.",
+  "turns": [
+    {
+      "user": "movies like Inception",
+      "invariants": [
+        {"kind": "min_picks", "n": 2}
+      ]
+    },
+    {
+      "user": "who directed the second one?",
+      "invariants": [
+        {"kind": "routes_to", "route": "MOVIE_INFO"},
+        {"kind": "answers_about_pick", "n": 2, "field": "director"}
+      ]
+    }
+  ]
+}

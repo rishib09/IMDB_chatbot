@@ -23,6 +23,16 @@ Queries with no relevant ids (the ``ood_unanswerable`` rows) are excluded from
 recall/hit/MRR - there is no right answer to recall - but still counted for the
 fallback rate. Metrics are reported overall and per category.
 
+TWO TIERS (ticket #68). By default the labeled ``parsed`` constraints are HANDED
+to the retriever, so the tier measures retrieval alone - deterministic, free, and
+blind to the extractor. Pass ``parse=`` to run the constraints the LLM extractor
+actually produces instead: same rows, same metrics, and the delta between the two
+tiers IS the extraction regression signal (the #90 failure mode, where a
+vibe-phrased query flakes into an empty parse stamped ``region="US"``). Exclusions
+are always scored against the LABEL, never against the parse the system produced:
+the user asked for no Tom Cruise, so a Tom Cruise film in the results is a miss
+whether the extractor dropped the exclusion or the filter leaked it.
+
 To measure Recall@10 the retriever must be able to return >=10 candidates; build
 it with ``final_k=10`` (the CLI does). If it returns fewer, the @10 figures
 degrade gracefully to whatever depth is available.
@@ -30,15 +40,21 @@ degrade gracefully to whatever depth is available.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
 from statistics import fmean
 
 from ..retrieval.retrieve import HybridRetriever
+from ..schemas import ParsedQuery
 from .labels import CATEGORIES, LabeledQuery
 
 # The depths at which Hit/Recall are reported.
 K_VALUES: tuple[int, ...] = (1, 3, 5, 10)
+
+# Tier 2: derive the retrieval constraints from the query instead of reading them
+# off the label. In production this is the LLM extractor plus its deterministic
+# guards; it costs one model call per row.
+ParseFn = Callable[[LabeledQuery], ParsedQuery]
 
 
 @dataclass
@@ -59,6 +75,9 @@ class QueryResult:
     has_exclusions: bool
     exclusion_clean: bool | None  # None when the query has no exclusions
     fell_back: bool  # retrieval returned zero candidates
+    # Tier 2 only: the constraints the extractor actually produced (non-default
+    # fields). None in the anchored tier, where the label's parse was used as-is.
+    extracted_parse: dict | None = None
 
 
 @dataclass
@@ -100,9 +119,15 @@ def _eval_query(
     retriever: HybridRetriever,
     label: LabeledQuery,
     k_values: Sequence[int],
+    parse: ParseFn | None = None,
 ) -> QueryResult:
-    """Run one query and measure it against its anchored relevant ids."""
-    scored = retriever.retrieve(label.query, parsed=label.parsed)
+    """Run one query and measure it against its anchored relevant ids.
+
+    ``parse`` (tier 2) derives the constraints from the query text; without it the
+    label's own ``parsed`` is handed to the retriever (tier 1).
+    """
+    used = label.parsed if parse is None else parse(label)
+    scored = retriever.retrieve(label.query, parsed=used)
     ranked_ids = [s.tmdb_id for s in scored]
     relevant = set(label.relevant_tmdb_ids)
 
@@ -121,6 +146,8 @@ def _eval_query(
         recall_at = {k: None for k in k_values}
         reciprocal_rank = None
 
+    # Scored against the LABEL's exclusions in both tiers: what the user asked to
+    # exclude is the standard, not what the extractor happened to notice.
     has_exclusions = bool(label.parsed.exclude_actors or label.parsed.exclude_genres)
     exclusion_clean: bool | None = None
     if has_exclusions:
@@ -151,6 +178,7 @@ def _eval_query(
         has_exclusions=has_exclusions,
         exclusion_clean=exclusion_clean,
         fell_back=len(ranked_ids) == 0,
+        extracted_parse=None if parse is None else used.model_dump(exclude_defaults=True),
     )
 
 
@@ -205,14 +233,17 @@ def evaluate(
     labels: Sequence[LabeledQuery],
     *,
     k_values: Sequence[int] = K_VALUES,
+    parse: ParseFn | None = None,
 ) -> EvalReport:
     """Run ``retriever`` over ``labels`` and return the anchored eval report.
 
     Deterministic for a fixed index + labeled set (the retriever itself is
-    deterministic). Recall is measured and reported, never asserted.
+    deterministic) when ``parse`` is None. With ``parse`` this is the tier-2 run:
+    one extractor call per row, so it costs money and is only as reproducible as
+    the model. Recall is measured and reported, never asserted.
     """
     k_values = tuple(k_values)
-    results = [_eval_query(retriever, label, k_values) for label in labels]
+    results = [_eval_query(retriever, label, k_values, parse) for label in labels]
 
     overall = _summarize("overall", results, k_values)
     per_category: dict[str, CategorySummary] = {}

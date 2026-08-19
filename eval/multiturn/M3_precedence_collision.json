@@ -1,0 +1,21 @@
+{
+  "name": "M3_precedence_collision",
+  "description": "Minimal precedence (#21/#22/#54): a replacement region REPLACES the standing one (FR, never KR-and-FR, which would empty the pool) while the standing genre survives.",
+  "turns": [
+    {
+      "user": "korean thrillers",
+      "invariants": [
+        {"kind": "parsed", "field": "region", "equals": "KR"},
+        {"kind": "min_picks", "n": 1}
+      ]
+    },
+    {
+      "user": "actually make it french",
+      "invariants": [
+        {"kind": "parsed", "field": "region", "equals": "FR"},
+        {"kind": "parsed", "field": "genres", "contains": ["Thriller"]},
+        {"kind": "min_picks", "n": 1}
+      ]
+    }
+  ]
+}

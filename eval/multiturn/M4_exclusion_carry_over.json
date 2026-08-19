@@ -1,0 +1,25 @@
+{
+  "name": "M4_exclusion_carry_over",
+  "description": "S1 constraint dropped across turns: an exclusion stated once still binds two turns later without being restated.",
+  "turns": [
+    {
+      "user": "action movies",
+      "invariants": [
+        {"kind": "recommends_genre", "genre": "Action"}
+      ]
+    },
+    {
+      "user": "nothing with Tom Cruise",
+      "invariants": [
+        {"kind": "constraint_holds", "exclude_actors": ["Tom Cruise"]}
+      ]
+    },
+    {
+      "user": "more like that",
+      "invariants": [
+        {"kind": "constraint_holds", "exclude_actors": ["Tom Cruise"]},
+        {"kind": "no_repeat"}
+      ]
+    }
+  ]
+}

@@ -19,6 +19,10 @@ Fields:
 
 The loader validates each row into a typed ``LabeledQuery`` (pydantic) and rejects
 unknown categories loudly so a typo never silently mislabels a row.
+
+The canonical set (D2 / #64) is ``eval/labels.jsonl`` at the repo root - git owns
+the labels, Langfuse only executes them. **Adding a case is appending one line to
+that file in a PR**; ``tests/test_golden_set.py`` then checks it mechanically.
 """
 
 from __future__ import annotations

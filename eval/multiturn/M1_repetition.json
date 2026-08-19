@@ -1,0 +1,19 @@
+{
+  "name": "M1_repetition",
+  "description": "Repetition (S2 / #88): asking for more must surface films not already shown.",
+  "turns": [
+    {
+      "user": "sci-fi movies",
+      "invariants": [
+        {"kind": "min_picks", "n": 1}
+      ]
+    },
+    {
+      "user": "show me more",
+      "invariants": [
+        {"kind": "no_repeat"},
+        {"kind": "min_picks", "n": 1}
+      ]
+    }
+  ]
+}
