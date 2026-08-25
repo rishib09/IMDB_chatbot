@@ -1,0 +1,16 @@
+{
+  "name": "broken_live_kinds",
+  "description": "DELIBERATELY BROKEN: one plain search turn that asserts it was routed to CHITCHAT with no retrieval, a region the deterministic extractor never sets, no Horror in picks that are all Horror, and a fact about a film no earlier turn showed. All five of the B3b invariant kinds must report a failure here - a checker that shrugged at absent evidence would report this script green, which is how nine golden scripts become nine no-ops.",
+  "turns": [
+    {
+      "user": "horror movies",
+      "invariants": [
+        {"kind": "routes_to", "route": "CHITCHAT"},
+        {"kind": "no_retrieval"},
+        {"kind": "parsed", "field": "region", "equals": "KR"},
+        {"kind": "omits_genre", "genre": "Horror"},
+        {"kind": "answers_about_pick", "n": 1, "field": "director"}
+      ]
+    }
+  ]
+}

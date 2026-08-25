@@ -29,6 +29,14 @@ Two further surfaces land with ticket #24:
   taxonomy ``flags`` it fired (section 8.2), plus batch counting.
 - ``replay``: the multi-turn replay suite - scripted conversations with
   code-verifiable invariants, replayed through the graph with fake models.
+
+And the multi-turn tier (ticket #106):
+
+- ``multiturn``: the same scripts run through the REAL handler (router, session,
+  extractor, index, Gate-4, generator), reported as a pass/fail table with the
+  run's cost::
+
+      npx @dotenvx/dotenvx run -f .env -- python -m imdb_chatbot.eval.multiturn
 """
 
 from __future__ import annotations
@@ -50,6 +58,11 @@ from .harness import (
     format_report,
 )
 from .labels import CATEGORIES, LabeledQuery, load_labels
+from .multiturn import (
+    format_multiturn_report,
+    run_live_script,
+    run_live_scripts,
+)
 from .replay import (
     Invariant,
     ReplayScript,
@@ -78,9 +91,12 @@ __all__ = [
     "count_codes",
     "detect",
     "evaluate",
+    "format_multiturn_report",
     "format_report",
     "load_labels",
     "load_script",
     "load_scripts",
+    "run_live_script",
+    "run_live_scripts",
     "run_script",
 ]
