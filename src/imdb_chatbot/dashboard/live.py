@@ -28,7 +28,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..graph import GraphModels, RetrieverFn, UsageMeter, estimate_cost
+from ..graph import GraphModels, RetrieverFn, UsageMeter
 from ..graph.normalize import CorpusVocab
 from ..movie_info import TitleExtractor, TitleLookup, answer_movie_question
 from ..persona import (
@@ -100,7 +100,6 @@ class LiveResources:
 
     retriever: RetrieverFn
     models_factory: ModelsFactory
-    pricing: dict[str, dict[str, float]]
     versions: dict[str, str]
     store: object | None = None  # TraceStore | None (kept loose to avoid import)
     # Cheap LLM used for conversational (chit-chat) replies; None -> deterministic
@@ -131,8 +130,7 @@ def load_live_resources(
     catches it and falls back to the stub handler.
     """
     from ..config import get_secret, load_live_index, load_models_config
-    from ..graph.models import _init_slot_model, build_models
-    from ..graph.usage import load_pricing, usage_from_message
+    from ..graph.models import _init_slot_model, build_models, usage_from_message
     from ..index.build import DEFAULT_CACHE_PATH, load_index
     from ..index.cache import EmbeddingCache
     from ..index.embedder import build_embedder
@@ -199,7 +197,7 @@ def load_live_resources(
                 model=model or cfg["slots"]["rewriter"]["default"],
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
-                reported_cost_usd=cost,
+                cost_usd=cost,
             )
         return str(getattr(resp, "content", resp))
 
@@ -221,7 +219,6 @@ def load_live_resources(
     return LiveResources(
         retriever=retriever,
         models_factory=models_factory,
-        pricing=load_pricing(cfg),
         versions={
             "index": str(ptr.get("active", "dev")),
             "model_config": "dev",
@@ -327,7 +324,7 @@ def build_live_chat_handler(
                     models=meter.models(),
                     input_tokens=meter.input_tokens,
                     output_tokens=meter.output_tokens,
-                    cost_usd=estimate_cost(meter, resources.pricing),
+                    cost_usd=meter.cost_usd,
                 )
             return ChatReply(
                 rec=RecommendationSet(picks=[], prose=text),
@@ -365,7 +362,6 @@ def build_live_chat_handler(
             store=resources.store,
             versions=resources.versions,
             usage=meter,
-            pricing=resources.pricing,
             vocab=resources.vocab,
         )
         rec = result.state.response or RecommendationSet(picks=[], prose="")

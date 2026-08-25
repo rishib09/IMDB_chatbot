@@ -31,7 +31,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from ..schemas import TurnState, TurnTrace
-from .usage import UsageMeter, estimate_cost
+from .models import UsageMeter
 
 # A node returns a dict of TurnState field updates (LangGraph merges them).
 NodeFn = Callable[[TurnState], dict[str, Any]]
@@ -148,7 +148,6 @@ def serialize_trace(
     *,
     versions: dict[str, str] | None = None,
     usage: UsageMeter | None = None,
-    pricing: dict[str, dict[str, float]] | None = None,
 ) -> TurnTrace:
     """Snapshot the final ``TurnState`` into an immutable ``TurnTrace``.
 
@@ -157,7 +156,8 @@ def serialize_trace(
 
     ``usage`` (a per-turn ``UsageMeter``) populates the trace's ``token_usage``
     and ``cost_usd`` - the system-of-record for per-turn spend that the daily
-    budget tracker sums. Absent a meter both stay at their empty defaults.
+    budget tracker sums, and every figure is the provider's own (ticket #67).
+    Absent a meter both stay at their empty defaults.
     """
     versions = versions or {}
     token_usage: dict[str, int] = {}
@@ -168,7 +168,7 @@ def serialize_trace(
             "output_tokens": usage.output_tokens,
             "total_tokens": usage.total_tokens,
         }
-        cost_usd = estimate_cost(usage, pricing)
+        cost_usd = usage.cost_usd
     return TurnTrace(
         trace_id=state.trace_id,
         ts=datetime.now(UTC),

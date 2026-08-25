@@ -176,13 +176,13 @@ def main(argv: list[str] | None = None) -> int:
         parse: ParseFn | None = None
         meter = None
         if args.tier == "extract":
-            from ..graph.usage import UsageMeter, estimate_cost
+            from ..graph.models import UsageMeter
 
             meter = UsageMeter()
             parse = _extract_tier(retriever, meter)
         report = evaluate(retriever, labels, k_values=K_VALUES, parse=parse)
         if meter is not None:
-            cost_usd = estimate_cost(meter)
+            cost_usd = meter.cost_usd
     finally:
         store.close()
 

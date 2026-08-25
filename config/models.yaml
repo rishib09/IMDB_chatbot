@@ -63,27 +63,7 @@ embedder:
       model: openai/text-embedding-3-small
       dimensions: 1536
 
-# Approximate OpenRouter list prices in USD per 1,000,000 tokens. Used ONLY to
-# estimate a turn's cost when OpenRouter does not return an actual per-request
-# cost (the app requests usage.include, so real costs are preferred when present).
-# These are editable estimates - verify against https://openrouter.ai/models.
-pricing:
-  google/gemma-3-12b-it:
-    input: 0.05
-    output: 0.10
-  google/gemma-3-27b-it:
-    input: 0.10
-    output: 0.20
-  meta-llama/llama-3.1-8b-instruct:
-    input: 0.02
-    output: 0.03
-  deepseek/deepseek-chat:
-    input: 0.14
-    output: 0.28
-  # Embedding models bill input only; `output: 0` keeps the table shape uniform.
-  openai/text-embedding-3-large:
-    input: 0.13
-    output: 0.0
-  openai/text-embedding-3-small:
-    input: 0.02
-    output: 0.0
+# No `pricing:` table lives here (ticket #67). Every request sends
+# `usage: {include: true}`, so OpenRouter returns its own per-request cost and
+# that is the single source of truth for spend - a hand-copied price list would
+# only drift away from it.

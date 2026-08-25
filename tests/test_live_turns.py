@@ -133,6 +133,9 @@ def test_chitchat_gets_one_cheap_llm_reply(handler) -> None:
     assert meter is not None, _describe(reply)
     assert list(meter.models) == ["chat"], _describe(reply)  # exactly one cheap call
     assert meter.input_tokens > 0 and meter.output_tokens > 0, _describe(reply)
+    # Cost is OpenRouter's own figure now (#67) - a zero here means the usage
+    # block stopped carrying it, not that the call was free.
+    assert meter.cost_usd > 0, _describe(reply)
 
 
 def test_meta_purpose_reply(handler) -> None:
@@ -164,6 +167,9 @@ def test_search_returns_on_topic_cards(retry_scenario) -> None:
         assert "generate" in meter.path_taken, _describe(reply)
         assert "validate" in meter.path_taken, _describe(reply)
         assert "fallback" not in meter.path_taken, _describe(reply)
+        # The strip's cost comes off the persisted TurnTrace, whose only source
+        # is what the provider reported for this turn's calls (#67).
+        assert meter.cost_usd > 0, _describe(reply)
         titles = {p.title for p in reply.rec.picks}
         assert len(titles & NOLAN_FILMS) * 2 >= len(titles), _describe(reply)  # mostly Nolan
 
