@@ -39,7 +39,7 @@ The measuring instrument lives in [`eval/`](eval/) and is plain, diffable data:
 | Path | What it holds |
 |------|---------------|
 | `eval/labels.jsonl` | 52 anchored single-turn cases across the 8 coverage cells - one JSON object per line, loaded by `imdb_chatbot.eval.load_labels` |
-| `eval/multiturn/*.json` | 9 multi-turn scripts, each turn carrying machine-readable invariants (the runner is #106) |
+| `eval/multiturn/*.json` | 9 multi-turn scripts, each turn carrying machine-readable invariants, run by `imdb_chatbot.eval.multiturn` |
 
 **Adding a case is one step: append one line to `eval/labels.jsonl` in a PR.**
 
@@ -60,6 +60,7 @@ Run the two tiers over it:
 |------|---------|------------------|
 | Anchored (free, deterministic) | `python -m imdb_chatbot.eval --db data/corpus.sqlite` | Retrieval alone - the labeled constraints are handed to the retriever |
 | Extractor-in-the-loop (real spend) | `npx @dotenvx/dotenvx run -f .env -- python -m imdb_chatbot.eval --db data/corpus.sqlite --tier extract` | Query -> LLM extract -> retrieve; the delta against the anchored tier is the extraction regression |
+| Multi-turn (real spend) | `npx @dotenvx/dotenvx run -f .env -- python -m imdb_chatbot.eval.multiturn --db data/corpus.sqlite` | The 9 scripts through the whole live handler - router, session memory, Gate-4 - as a pass/fail table with the run's cost |
 
 ## Configuration
 

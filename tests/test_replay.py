@@ -87,7 +87,8 @@ def test_deliberately_broken_script_is_detected(tmp_path: Path) -> None:
 def test_no_repeat_checker_flags_a_repeat() -> None:
     john_wick = _film("John Wick", 2014)
     ctx = _TurnContext(
-        state=None,  # type: ignore[arg-type]  # no_repeat does not read state
+        parsed=None,  # no_repeat reads only the picks and the shown set
+        rewritten_query=None,
         recommended=[john_wick],
         shown_before={john_wick.tmdb_id},
         fell_to_fallback=False,
@@ -100,7 +101,8 @@ def test_no_repeat_checker_flags_a_repeat() -> None:
 def test_no_repeat_checker_passes_on_fresh_pick() -> None:
     fresh = _film("Mad Max: Fury Road", 2015)
     ctx = _TurnContext(
-        state=None,  # type: ignore[arg-type]
+        parsed=None,
+        rewritten_query=None,
         recommended=[fresh],
         shown_before={1},
         fell_to_fallback=False,

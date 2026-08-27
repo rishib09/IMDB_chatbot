@@ -29,6 +29,18 @@ Two further surfaces land with ticket #24:
   taxonomy ``flags`` it fired (section 8.2), plus batch counting.
 - ``replay``: the multi-turn replay suite - scripted conversations with
   code-verifiable invariants, replayed through the graph with fake models.
+
+And the multi-turn tier (ticket #106):
+
+- ``multiturn``: the same scripts run through the REAL handler (router, session,
+  extractor, index, Gate-4, generator), reported as a pass/fail table with the
+  run's cost::
+
+      npx @dotenvx/dotenvx run -f .env -- python -m imdb_chatbot.eval.multiturn
+
+  Deliberately NOT re-exported here: it owns a ``__main__`` block, and importing
+  it from the package would make ``python -m imdb_chatbot.eval.multiturn``
+  execute the module twice. Import it by module path.
 """
 
 from __future__ import annotations

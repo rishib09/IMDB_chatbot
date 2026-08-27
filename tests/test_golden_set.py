@@ -21,7 +21,7 @@ import pytest
 from pydantic import ValidationError
 
 from imdb_chatbot.eval.labels import CATEGORIES, load_labels
-from imdb_chatbot.eval.replay import LIVE_ONLY_KINDS, Invariant, _check, load_scripts
+from imdb_chatbot.eval.replay import _CHECKERS, Invariant, _check, _TurnContext, load_scripts
 from imdb_chatbot.store import TraceStore
 
 GOLDEN = Path(__file__).resolve().parents[1] / "eval" / "labels.jsonl"
@@ -203,14 +203,71 @@ def test_a_typo_in_an_invariant_kind_is_rejected(tmp_path: Path) -> None:
         load_scripts(tmp_path)
 
 
-def test_an_unimplemented_invariant_kind_refuses_to_pass_silently() -> None:
-    """Attacks: 'every declared invariant kind is actually checked'.
+def test_every_parsed_invariant_names_a_real_parsedquery_field() -> None:
+    """Attacks: 'the scripts' field names still match the ParsedQuery contract'.
 
-    The golden scripts assert live-system properties whose checkers land with the
-    runner (#106). Until then ``_check`` must raise - a missing checker that
-    returned "ok" would turn nine scripts into nine green no-ops.
+    Six invariants across the scripts assert on ``ParsedQuery`` fields BY NAME.
+    Renaming one (``region`` -> ``origin``) or typing it wrong turns those into
+    permanent failures blamed on the system rather than on the label - the
+    multi-turn twin of an anchor that no longer exists in the corpus.
     """
-    assert LIVE_ONLY_KINDS, "no live-only kinds declared"
-    for kind in sorted(LIVE_ONLY_KINDS):
-        with pytest.raises(NotImplementedError):
-            _check(Invariant(kind=kind), None)  # type: ignore[arg-type]
+    from imdb_chatbot.schemas import ParsedQuery
+
+    named = {
+        (script.name, inv.field)
+        for script in load_scripts(MULTITURN)
+        for turn in script.turns
+        for inv in turn.invariants
+        if inv.kind == "parsed"
+    }
+    assert named, "no script asserts on the parse at all"
+    unknown = {pair for pair in named if pair[1] not in ParsedQuery.model_fields}
+    assert not unknown, f"invariants naming a field ParsedQuery does not have: {sorted(unknown)}"
+
+
+def test_every_kind_the_scripts_use_is_actually_checked() -> None:
+    """Attacks: 'every declared invariant kind is actually evaluated'.
+
+    A kind added to ``InvariantKind`` (so scripts may use it) but never wired into
+    ``_CHECKERS`` would make ``_check`` raise mid-run - or, if the lookup were ever
+    made lenient, turn the scripts into green no-ops. Both start here.
+    """
+    used = {inv.kind for s in load_scripts(MULTITURN) for t in s.turns for inv in t.invariants}
+    assert used, "the golden scripts assert nothing"
+    assert used <= set(_CHECKERS), f"kinds with no checker: {sorted(used - set(_CHECKERS))}"
+
+
+def test_an_unobserved_invariant_fails_rather_than_passing_silently() -> None:
+    """Attacks: 'a checker with no evidence reports the truth'.
+
+    The live-tier kinds read things a given runner may not have captured - the
+    route, the retrieval count, the parse, the previous turn's picks. A checker
+    that treated "I saw nothing" as "nothing was wrong" would report nine green
+    scripts while measuring nothing, which is worse than no runner at all.
+    """
+    blind = _TurnContext(
+        parsed=None,
+        rewritten_query=None,
+        recommended=[],
+        shown_before=set(),
+        fell_to_fallback=False,
+    )
+    for inv in (
+        Invariant(kind="parsed", field="region", equals="KR"),
+        Invariant(kind="routes_to", route="CHITCHAT"),
+        Invariant(kind="no_retrieval"),
+        Invariant(kind="answers_about_pick", n=2, field="director"),
+    ):
+        outcome = _check(inv, blind)
+        assert outcome.ok is False, f"{inv.kind} passed on a context that observed nothing"
+        assert outcome.detail, f"{inv.kind} failed without saying why"
+
+
+def test_an_unwired_invariant_kind_raises_instead_of_being_ignored() -> None:
+    """Attacks: 'an unknown kind is refused, not skipped'.
+
+    ``_check`` is the last gate: a kind that reaches it with no checker must stop
+    the run loudly rather than be silently dropped from the script's assertions.
+    """
+    with pytest.raises(NotImplementedError):
+        _check(Invariant.model_construct(kind="not_a_kind"), None)  # type: ignore[arg-type]

@@ -21,12 +21,15 @@ user message plus a set of code-verifiable INVARIANTS to assert AFTER that turn:
     recommends_genre / min_picks / expect_fallback - positive helpers.
 
 The golden multi-turn scripts (B3 / #68) live in ``eval/multiturn/*.json`` and use
-this same format, so ``load_scripts("eval/multiturn")`` types them today. They
-assert LIVE properties (the extracted parse, the router's decision, the prose
-answer) the fake world below cannot produce; those checkers land with the live
-runner (#106) and ``_check`` refuses them loudly until then.
+this same format. They also assert LIVE properties - the extracted parse
+(``parsed``), the router's decision (``routes_to`` / ``no_retrieval``), the prose
+answer (``answers_about_pick``) - which the fake world below mostly cannot
+produce. Every kind now HAS a checker (#106); what varies is whether the runner
+driving the turn could observe the thing. A checker whose input the runner did
+not observe FAILS with that reason, never passes vacuously. The live runner that
+does observe all of it is ``eval/multiturn.py``.
 
-The RUNNER replays a script through the real single-turn graph (``run_turn``) with
+The RUNNER here replays a script through the real single-turn graph (``run_turn``) with
 injected FAKE models and a stub retriever over a small fixed catalog - fully
 deterministic, ZERO network I/O. Session memory is carried across turns by
 ``ConversationState`` (ticket #21); durable EXCLUDED facts are seeded through the
@@ -42,7 +45,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -62,8 +65,8 @@ from ..schemas import (
     ParsedQuery,
     RecommendationSet,
     ScoredMovie,
-    TurnState,
 )
+from ..text import normalize_text
 
 # How many picks the fake generator returns per turn. One keeps the no-repeat
 # demonstration crisp: successive same-genre turns surface a NEW film each time.
@@ -256,10 +259,8 @@ InvariantKind = Literal[
     "min_picks",
     "expect_fallback",
     # Kinds used by the golden multi-turn scripts in ``eval/multiturn/`` (B3 /
-    # #68). They assert properties of the LIVE system - the extracted parse, the
-    # router's decision, the prose answer - that the fake catalog below does not
-    # have, so their checkers land with the live runner (#106). Declared here so
-    # the scripts are typed and a typo'd kind is rejected at load time today.
+    # #68): properties of the LIVE system - the extracted parse, the router's
+    # decision, the prose answer.
     "parsed",
     "routes_to",
     "omits_genre",
@@ -267,11 +268,8 @@ InvariantKind = Literal[
     "no_retrieval",
 ]
 
-# Kinds ``_check`` can evaluate in the deterministic fake world below. Anything
-# else is a live-runner kind: valid data, no checker yet (#106).
-LIVE_ONLY_KINDS: frozenset[str] = frozenset(
-    {"parsed", "routes_to", "omits_genre", "answers_about_pick", "no_retrieval"}
-)
+# The production paths a turn can take, as ``routes_to`` names them.
+ROUTES: tuple[str, ...] = ("SEARCH", "CHITCHAT", "MOVIE_INFO")
 
 
 class Invariant(BaseModel):
@@ -329,12 +327,30 @@ def load_scripts(directory: str | Path) -> list[ReplayScript]:
 
 @dataclass
 class _TurnContext:
-    """Everything an invariant checker needs about one completed turn."""
+    """Everything an invariant checker needs about one completed turn.
 
-    state: TurnState
-    recommended: list[_Film]
+    Filled by BOTH runners - the fake ``run_script`` below and the live
+    ``eval/multiturn.py`` - so one set of checkers serves both. Fields a runner
+    cannot observe stay ``None`` / empty, and the checkers that need them fail
+    naming that, rather than passing vacuously.
+
+    ``recommended`` is duck-typed on ``.tmdb_id / .title / .year / .genres /
+    .cast``: ``_Film`` rows in the fake world, ``MovieRecord`` rows live.
+    """
+
+    parsed: ParsedQuery | None
+    rewritten_query: str | None
+    recommended: list[Any]
     shown_before: set[int]
     fell_to_fallback: bool
+    # Which production path served the turn, one of ``ROUTES``.
+    route: str | None = None
+    # Times the retriever was invoked (0 = the turn cost no retrieval at all).
+    retrieval_calls: int | None = None
+    # The prose the user actually saw this turn.
+    prose: str = ""
+    # What the PREVIOUS turn recommended, for ordinal references ("the second one").
+    previous_recommended: list[Any] = field(default_factory=list)
 
 
 @dataclass
@@ -351,6 +367,8 @@ class TurnOutcome:
     rewritten_query: str | None
     picks: list[tuple[str, int]]
     invariants: list[InvariantOutcome]
+    route: str | None = None
+    cost_usd: float = 0.0
 
     @property
     def ok(self) -> bool:
@@ -361,6 +379,11 @@ class TurnOutcome:
 class ScriptOutcome:
     name: str
     turns: list[TurnOutcome] = field(default_factory=list)
+
+    @property
+    def cost_usd(self) -> float:
+        """What this script's turns cost to run (0.0 for the free fake runner)."""
+        return sum(turn.cost_usd for turn in self.turns)
 
     @property
     def ok(self) -> bool:
@@ -385,7 +408,7 @@ class ScriptOutcome:
 
 
 def _check_constraint_holds(inv: Invariant, ctx: _TurnContext) -> InvariantOutcome:
-    parsed = ctx.state.parsed or ParsedQuery()
+    parsed = ctx.parsed or ParsedQuery()
     for genre in inv.exclude_genres:
         if genre not in parsed.exclude_genres:
             return InvariantOutcome("constraint_holds", False, f"exclusion {genre!r} not applied")
@@ -413,20 +436,20 @@ def _check_no_repeat(inv: Invariant, ctx: _TurnContext) -> InvariantOutcome:
 
 
 def _check_resolves_reference(inv: Invariant, ctx: _TurnContext) -> InvariantOutcome:
-    rewritten = (ctx.state.rewritten_query or "").lower()
+    rewritten = (ctx.rewritten_query or "").lower()
     missing = [s for s in inv.contains if s.lower() not in rewritten]
     if missing:
         return InvariantOutcome(
             "resolves_reference",
             False,
-            f"rewritten query {ctx.state.rewritten_query!r} missing {missing}",
+            f"rewritten query {ctx.rewritten_query!r} missing {missing}",
         )
     return InvariantOutcome("resolves_reference", True, "ok")
 
 
 def _check_precedence_complies(inv: Invariant, ctx: _TurnContext) -> InvariantOutcome:
     """The re-requested genre OR actor is no longer excluded, and is delivered."""
-    parsed = ctx.state.parsed or ParsedQuery()
+    parsed = ctx.parsed or ParsedQuery()
     if inv.actor:
         excluded, delivered = parsed.exclude_actors, [f.cast for f in ctx.recommended]
         wanted = inv.actor
@@ -465,6 +488,100 @@ def _check_expect_fallback(inv: Invariant, ctx: _TurnContext) -> InvariantOutcom
     return InvariantOutcome("expect_fallback", True, "ok")
 
 
+def _check_parsed(inv: Invariant, ctx: _TurnContext) -> InvariantOutcome:
+    """One field of the parse retrieval actually ran with equals / contains a value.
+
+    This is the constraint-state assertion (#54): whether the standing region was
+    REPLACED rather than intersected, whether an earlier genre survived a later
+    narrowing. The parse checked is the session-merged one the retriever was
+    handed, after any relaxation the turn needed - i.e. what really constrained
+    the search, not what the extractor first proposed.
+    """
+    if ctx.parsed is None:
+        return InvariantOutcome("parsed", False, "no parse was observed on this turn")
+    name = inv.field or ""
+    if name not in ParsedQuery.model_fields:
+        return InvariantOutcome("parsed", False, f"{name!r} is not a ParsedQuery field")
+    value = getattr(ctx.parsed, name)
+    if inv.contains:
+        missing = [want for want in inv.contains if want not in (value or [])]
+        if missing:
+            return InvariantOutcome("parsed", False, f"{name}={value!r} is missing {missing}")
+    elif inv.equals is not None:
+        if value != inv.equals:
+            return InvariantOutcome(
+                "parsed", False, f"{name}={value!r}, expected {inv.equals!r}"
+            )
+    else:
+        return InvariantOutcome("parsed", False, "invariant declares neither equals nor contains")
+    return InvariantOutcome("parsed", True, "ok")
+
+
+def _check_routes_to(inv: Invariant, ctx: _TurnContext) -> InvariantOutcome:
+    """The turn was served by the expected production path (#44/#54)."""
+    want = (inv.route or "").upper()
+    if want not in ROUTES:
+        return InvariantOutcome("routes_to", False, f"unknown route {inv.route!r}, want {ROUTES}")
+    if ctx.route is None:
+        return InvariantOutcome("routes_to", False, "this runner does not observe routing")
+    if ctx.route != want:
+        return InvariantOutcome("routes_to", False, f"routed to {ctx.route}, expected {want}")
+    return InvariantOutcome("routes_to", True, "ok")
+
+
+def _check_omits_genre(inv: Invariant, ctx: _TurnContext) -> InvariantOutcome:
+    """The replaced genre did NOT leak into this turn's picks (#54 route=replace)."""
+    genre = inv.genre or ""
+    leaked = [f.title for f in ctx.recommended if genre in f.genres]
+    if leaked:
+        return InvariantOutcome("omits_genre", False, f"{genre!r} survived in {leaked}")
+    return InvariantOutcome("omits_genre", True, "ok")
+
+
+def _check_no_retrieval(inv: Invariant, ctx: _TurnContext) -> InvariantOutcome:
+    """A chit-chat / persona turn cost zero retrieval calls (#44 router isolation)."""
+    if ctx.retrieval_calls is None:
+        return InvariantOutcome("no_retrieval", False, "this runner does not instrument retrieval")
+    if ctx.retrieval_calls:
+        return InvariantOutcome(
+            "no_retrieval", False, f"retrieval ran {ctx.retrieval_calls}x on a no-retrieval turn"
+        )
+    return InvariantOutcome("no_retrieval", True, "ok")
+
+
+def _check_answers_about_pick(inv: Invariant, ctx: _TurnContext) -> InvariantOutcome:
+    """The answer is about the Nth film of the PREVIOUS turn, and states ``field``.
+
+    Section 7.5's hardest case: "who directed the second one?" must resolve the
+    ordinal against the list just shown and answer from that film's corpus record
+    - so the prose must both NAME the film and carry the requested fact. Matching
+    is punctuation/case-folded (``normalize_text``), never an exact string.
+    """
+    n = inv.n or 1
+    shown = ctx.previous_recommended
+    if len(shown) < n:
+        return InvariantOutcome(
+            "answers_about_pick", False, f"the previous turn showed {len(shown)} film(s), not {n}"
+        )
+    movie = shown[n - 1]
+    name = inv.field or "title"
+    value = getattr(movie, name, None)
+    if not value:
+        return InvariantOutcome(
+            "answers_about_pick", False, f"{movie.title!r} has no {name} to answer with"
+        )
+    prose = normalize_text(ctx.prose)
+    if normalize_text(movie.title) not in prose:
+        return InvariantOutcome(
+            "answers_about_pick", False, f"answer never names {movie.title!r}: {ctx.prose!r}"
+        )
+    if normalize_text(str(value)) not in prose:
+        return InvariantOutcome(
+            "answers_about_pick", False, f"answer omits {name}={value!r}: {ctx.prose!r}"
+        )
+    return InvariantOutcome("answers_about_pick", True, "ok")
+
+
 _CHECKERS = {
     "constraint_holds": _check_constraint_holds,
     "no_repeat": _check_no_repeat,
@@ -473,16 +590,21 @@ _CHECKERS = {
     "recommends_genre": _check_recommends_genre,
     "min_picks": _check_min_picks,
     "expect_fallback": _check_expect_fallback,
+    "parsed": _check_parsed,
+    "routes_to": _check_routes_to,
+    "omits_genre": _check_omits_genre,
+    "no_retrieval": _check_no_retrieval,
+    "answers_about_pick": _check_answers_about_pick,
 }
 
 
 def _check(inv: Invariant, ctx: _TurnContext) -> InvariantOutcome:
     checker = _CHECKERS.get(inv.kind)
     if checker is None:
-        raise NotImplementedError(
-            f"invariant {inv.kind!r} asserts a live-system property the fake replay "
-            "world does not have; its checker lands with the live runner (#106)"
-        )
+        # Unreachable through ``load_script`` (``InvariantKind`` rejects a typo at
+        # load time); this guards a kind added to the Literal and never wired up,
+        # which would otherwise turn a script into a silent no-op.
+        raise NotImplementedError(f"invariant kind {inv.kind!r} has no checker")
     return checker(inv, ctx)
 
 
@@ -550,6 +672,7 @@ def run_script(script: ReplayScript, *, workdir: str | Path | None = None) -> Sc
         _seed_durable(conversation, script.user_id, script.durable_excluded, Path(workdir))
 
     outcome = ScriptOutcome(name=script.name)
+    previous: list[_Film] = []
     for index, turn in enumerate(script.turns, start=1):
         result, shown_before = _drive_turn(
             conversation, turn.user, trace_id=f"{script.name}-t{index}", models=models
@@ -562,10 +685,17 @@ def run_script(script: ReplayScript, *, workdir: str | Path | None = None) -> Sc
                 if film is not None:
                     recommended.append(film)
         ctx = _TurnContext(
-            state=final,
+            parsed=final.parsed,
+            rewritten_query=final.rewritten_query,
             recommended=recommended,
             shown_before=shown_before,
             fell_to_fallback="fallback" in final.path_taken,
+            # This runner drives ``run_turn`` directly - there is no router, so
+            # every turn IS a search and every turn does retrieve (>=1 call).
+            route="SEARCH",
+            retrieval_calls=1,
+            prose=final.response.prose if final.response is not None else "",
+            previous_recommended=previous,
         )
         outcome.turns.append(
             TurnOutcome(
@@ -574,6 +704,8 @@ def run_script(script: ReplayScript, *, workdir: str | Path | None = None) -> Sc
                 rewritten_query=final.rewritten_query,
                 picks=[(f.title, f.year) for f in recommended],
                 invariants=[_check(inv, ctx) for inv in turn.invariants],
+                route="SEARCH",
             )
         )
+        previous = recommended
     return outcome
