@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -178,35 +178,65 @@ def run_live_script(script: ReplayScript, resources) -> ScriptOutcome:
     return outcome
 
 
-def run_live_scripts(scripts: Sequence[ReplayScript], resources) -> list[ScriptOutcome]:
-    """Run every script on its own session, in order."""
-    return [run_live_script(script, resources) for script in scripts]
+def run_live_scripts(
+    scripts: Sequence[ReplayScript],
+    resources,
+    *,
+    on_script: Callable[[ScriptOutcome], None] | None = None,
+) -> list[ScriptOutcome]:
+    """Run every script on its own session, in order.
+
+    A full run is ~70 real model calls and takes minutes, so ``on_script`` is
+    called as each one lands - the CLI uses it to stream the table rather than
+    leaving a long run looking hung.
+    """
+    outcomes: list[ScriptOutcome] = []
+    for script in scripts:
+        outcome = run_live_script(script, resources)
+        outcomes.append(outcome)
+        if on_script is not None:
+            on_script(outcome)
+    return outcomes
 
 
 # -- reporting ----------------------------------------------------------------
 
 
+def format_script_row(outcome: ScriptOutcome) -> str:
+    """One script's verdict: pass/fail, how much held, cost, and every violation."""
+    checks = [inv for turn in outcome.turns for inv in turn.invariants]
+    held = sum(1 for inv in checks if inv.ok)
+    verdict = "PASS" if outcome.ok else "FAIL"
+    lines = [
+        (
+            f"[{verdict}] {outcome.name:<28} turns={len(outcome.turns)} "
+            f"invariants={held}/{len(checks)} cost=${outcome.cost_usd:.4f}"
+        )
+    ]
+    lines.extend(f"        {failure}" for failure in outcome.failures())
+    return "\n".join(lines)
+
+
 def format_multiturn_report(outcomes: Sequence[ScriptOutcome]) -> str:
     """The pass/fail table: one row per script, then every violated expectation."""
-    lines = ["=== multi-turn scripts ==="]
-    passed = 0
-    for outcome in outcomes:
-        checks = [inv for turn in outcome.turns for inv in turn.invariants]
-        held = sum(1 for inv in checks if inv.ok)
-        passed += outcome.ok
-        lines.append(
-            f"[{'PASS' if outcome.ok else 'FAIL'}] {outcome.name:<28} "
-            f"turns={len(outcome.turns)} invariants={held}/{len(checks)} "
-            f"cost=${outcome.cost_usd:.4f}"
-        )
-        lines.extend(f"        {failure}" for failure in outcome.failures())
-    total_cost = sum(o.cost_usd for o in outcomes)
-    lines.append("")
-    lines.append(
-        f"{len(outcomes)} scripts: {passed} passed, {len(outcomes) - passed} failed | "
-        f"{sum(len(o.turns) for o in outcomes)} turns | cost ${total_cost:.4f}"
+    return "\n".join(
+        [
+            "=== multi-turn scripts ===",
+            *(format_script_row(o) for o in outcomes),
+            "",
+            format_totals(outcomes),
+        ]
     )
-    return "\n".join(lines)
+
+
+def format_totals(outcomes: Sequence[ScriptOutcome]) -> str:
+    """The one-line bottom of the table: scripts passed, turns run, dollars spent."""
+    passed = sum(1 for o in outcomes if o.ok)
+    return (
+        f"{len(outcomes)} scripts: {passed} passed, {len(outcomes) - passed} failed | "
+        f"{sum(len(o.turns) for o in outcomes)} turns | "
+        f"cost ${sum(o.cost_usd for o in outcomes):.4f}"
+    )
 
 
 def to_dict(outcomes: Sequence[ScriptOutcome]) -> dict:
@@ -264,14 +294,19 @@ def main(argv: list[str] | None = None) -> int:
 
     scripts = load_scripts(args.scripts)
     resources = load_live_resources(corpus_path=args.db)
+    print(f"scripts={args.scripts} n={len(scripts)} db={args.db}", flush=True)
+    print("=== multi-turn scripts ===", flush=True)
+
+    def show(outcome: ScriptOutcome) -> None:
+        print(format_script_row(outcome), flush=True)
+
     try:
-        outcomes = run_live_scripts(scripts, resources)
+        outcomes = run_live_scripts(scripts, resources, on_script=show)
     finally:
         if resources.store is not None:
             resources.store.close()
 
-    print(f"scripts={args.scripts} n={len(scripts)} db={args.db}")
-    print(format_multiturn_report(outcomes))
+    print("\n" + format_totals(outcomes))
     if args.json_out:
         import json
 

@@ -24,7 +24,12 @@ from pathlib import Path
 
 import pytest
 
-from imdb_chatbot.eval.multiturn import format_multiturn_report, run_live_scripts, to_dict
+from imdb_chatbot.eval.multiturn import (
+    format_multiturn_report,
+    format_script_row,
+    run_live_scripts,
+    to_dict,
+)
 from imdb_chatbot.eval.replay import (
     Invariant,
     _check,
@@ -129,7 +134,11 @@ def test_golden_multiturn_baseline(live_resources) -> None:
     is the baseline the report records, not a condition of the test.
     """
     scripts = load_scripts(MULTITURN)
-    outcomes = run_live_scripts(scripts, live_resources)
+    # ~70 real model calls: stream each verdict so a long run is watchable and a
+    # killed run still leaves the scripts it did finish on the record.
+    outcomes = run_live_scripts(
+        scripts, live_resources, on_script=lambda o: print(format_script_row(o), flush=True)
+    )
     report = format_multiturn_report(outcomes)
     print("\n" + report)
 

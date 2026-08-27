@@ -37,6 +37,10 @@ And the multi-turn tier (ticket #106):
   run's cost::
 
       npx @dotenvx/dotenvx run -f .env -- python -m imdb_chatbot.eval.multiturn
+
+  Deliberately NOT re-exported here: it owns a ``__main__`` block, and importing
+  it from the package would make ``python -m imdb_chatbot.eval.multiturn``
+  execute the module twice. Import it by module path.
 """
 
 from __future__ import annotations
@@ -58,11 +62,6 @@ from .harness import (
     format_report,
 )
 from .labels import CATEGORIES, LabeledQuery, load_labels
-from .multiturn import (
-    format_multiturn_report,
-    run_live_script,
-    run_live_scripts,
-)
 from .replay import (
     Invariant,
     ReplayScript,
@@ -91,12 +90,9 @@ __all__ = [
     "count_codes",
     "detect",
     "evaluate",
-    "format_multiturn_report",
     "format_report",
     "load_labels",
     "load_script",
     "load_scripts",
-    "run_live_script",
-    "run_live_scripts",
     "run_script",
 ]
