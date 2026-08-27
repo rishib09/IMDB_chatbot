@@ -42,10 +42,9 @@ from langgraph.graph import END, START, StateGraph
 from ..schemas import EXCLUSION_FIELDS, ParsedQuery, RecommendationSet, ScoredMovie, TurnState
 from ..store import TraceStore
 from .gate4 import run_gate4
-from .models import GraphModels
+from .models import GraphModels, UsageMeter
 from .normalize import CorpusVocab, normalize_parsed
 from .tracing import TraceCollector, langfuse_config, serialize_trace, traced
-from .usage import UsageMeter
 
 # Injected retriever: (rewritten_query, parsed, shown_movies) -> ranked candidates.
 # ``shown_movies`` must be excluded BEFORE the retriever's top-K cap (ticket #88).
@@ -481,7 +480,6 @@ def run_turn(
     store: TraceStore | None = None,
     versions: dict[str, str] | None = None,
     usage: UsageMeter | None = None,
-    pricing: dict[str, dict[str, float]] | None = None,
     vocab: CorpusVocab | None = None,
 ) -> TurnResult:
     """Run one conversational turn end-to-end and serialize a ``TurnTrace``.
@@ -499,9 +497,7 @@ def run_turn(
     graph = build_graph(retriever=retriever, models=models, collector=collector, vocab=vocab)
     result = graph.invoke(state, config=langfuse_config(state))
     final = TurnState.model_validate(result)
-    trace = serialize_trace(
-        final, collector, versions=versions, usage=usage, pricing=pricing
-    )
+    trace = serialize_trace(final, collector, versions=versions, usage=usage)
     if store is not None:
         store.write_trace(trace)
     return TurnResult(state=final, trace=trace)

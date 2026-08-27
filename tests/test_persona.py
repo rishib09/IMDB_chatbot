@@ -10,8 +10,7 @@ from __future__ import annotations
 import pytest
 
 from imdb_chatbot.dashboard.live import LiveResources, build_live_chat_handler
-from imdb_chatbot.graph.models import GraphModels
-from imdb_chatbot.graph.usage import UsageMeter
+from imdb_chatbot.graph.models import GraphModels, UsageMeter
 from imdb_chatbot.movie_info import build_title_lookup
 from imdb_chatbot.persona import (
     Intent,
@@ -143,17 +142,23 @@ def _fake_retriever(query: str, parsed: ParsedQuery, shown_movies=()):
 def _fake_models_factory(meter: UsageMeter | None) -> GraphModels:
     def rewrite(raw_query, history):
         if meter is not None:
-            meter.record("rewriter", model="m", input_tokens=10, output_tokens=2)
+            meter.record("rewriter", model="m", input_tokens=10, output_tokens=2, cost_usd=1e-6)
         return raw_query
 
     def extract(query):
         if meter is not None:
-            meter.record("extractor", model="m", input_tokens=10, output_tokens=2)
+            meter.record("extractor", model="m", input_tokens=10, output_tokens=2, cost_usd=1e-6)
         return ParsedQuery()
 
     def generate(query, candidates):
         if meter is not None:
-            meter.record("generator", model="deepseek/deepseek-chat", input_tokens=100, output_tokens=30)
+            meter.record(
+                "generator",
+                model="deepseek/deepseek-chat",
+                input_tokens=100,
+                output_tokens=30,
+                cost_usd=3e-5,
+            )
         return RecommendationSet(
             picks=[MovieRecommendation(title="Parasite", year=2019, reason="Tense.")],
             prose="A gripping pick.",
@@ -164,7 +169,13 @@ def _fake_models_factory(meter: UsageMeter | None) -> GraphModels:
 
 def _fake_chat_fn(message, meter):
     if meter is not None:
-        meter.record("chat", model="google/gemma-3-12b-it", input_tokens=20, output_tokens=15)
+        meter.record(
+            "chat",
+            model="google/gemma-3-12b-it",
+            input_tokens=20,
+            output_tokens=15,
+            cost_usd=2e-6,
+        )
     return "I'm doing great! Would you like me to recommend a movie, or just chatting?"
 
 
@@ -190,10 +201,6 @@ def _resources(
     return LiveResources(
         retriever=_fake_retriever,
         models_factory=_fake_models_factory,
-        pricing={
-            "deepseek/deepseek-chat": {"input": 0.14, "output": 0.28},
-            "google/gemma-3-12b-it": {"input": 0.05, "output": 0.10},
-        },
         versions={"index": "test", "model_config": "test", "prompt": "persona-v2"},
         store=store,
         chat_fn=chat_fn,

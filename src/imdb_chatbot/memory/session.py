@@ -224,7 +224,6 @@ def run_session_turn(
     store: TraceStore | None = None,
     versions: dict[str, str] | None = None,
     usage: UsageMeter | None = None,
-    pricing: dict[str, dict[str, float]] | None = None,
     vocab: CorpusVocab | None = None,
 ) -> TurnResult:
     """Run one turn with session memory applied, then update the session.
@@ -248,7 +247,6 @@ def run_session_turn(
         store=store,
         versions=versions,
         usage=usage,
-        pricing=pricing,
         vocab=vocab,
     )
     update_state_from_result(conversation, result)

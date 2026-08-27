@@ -12,17 +12,23 @@ tests construct ``GraphModels`` directly with fakes (see tests/test_graph.py), s
 no live OpenRouter call is ever made. ``build_models`` wires the real LangChain
 models from ``config/models.yaml`` - the extractor and generator use structured
 output (``with_structured_output``) against the Pydantic contracts.
+
+``UsageMeter`` lives here too (ticket #67), next to the only code that writes to
+it: a per-turn side-channel recording what OpenRouter *reported* for each call.
+There is no local price table any more - the app sends ``usage: {include: true}``
+so every response carries the provider's own cost, and that number is simply
+summed. A turn with no reported cost reports ``0.0`` rather than a guess.
 """
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from ..config import get_secret, load_models_config
 from ..schemas import ParsedQuery, RecommendationSet, ScoredMovie
-from .usage import UsageMeter, usage_from_message
 
 RewriteFn = Callable[[str, Sequence[Any]], str]
 ExtractFn = Callable[[str], ParsedQuery]
@@ -42,6 +48,114 @@ class GraphModels:
     rewrite: RewriteFn
     extract: ExtractFn
     generate: GenerateFn
+
+
+# -- per-turn usage accounting (ticket #67) ------------------------------------
+
+
+@dataclass
+class SlotUsage:
+    """What one model slot reported to us within a single turn."""
+
+    slot: str
+    model: str = ""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    calls: int = 0
+    cost_usd: float = 0.0  # OpenRouter's own per-request cost, summed
+
+
+@dataclass
+class UsageMeter:
+    """One turn's LLM accounting, keyed by slot.
+
+    Callables built by ``build_models`` call :meth:`record` after each invoke.
+    The totals flow into the ``TurnTrace`` (via ``serialize_trace``) and the Chat
+    UI telemetry strip. Every number here originates with the provider: nothing
+    is derived from a local price table, so nothing can drift out of date.
+    """
+
+    slots: dict[str, SlotUsage] = field(default_factory=dict)
+
+    def record(
+        self,
+        slot: str,
+        *,
+        model: str = "",
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        cost_usd: float = 0.0,
+    ) -> SlotUsage:
+        usage = self.slots.setdefault(slot, SlotUsage(slot=slot))
+        if model:
+            usage.model = model
+        usage.input_tokens += int(input_tokens or 0)
+        usage.output_tokens += int(output_tokens or 0)
+        usage.cost_usd += float(cost_usd or 0.0)
+        usage.calls += 1
+        return usage
+
+    @property
+    def input_tokens(self) -> int:
+        """Total prompt (uploaded) tokens across every slot this turn."""
+        return sum(u.input_tokens for u in self.slots.values())
+
+    @property
+    def output_tokens(self) -> int:
+        """Total completion (downloaded) tokens across every slot this turn."""
+        return sum(u.output_tokens for u in self.slots.values())
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+    @property
+    def cost_usd(self) -> float:
+        """USD the provider charged for this turn (0.0 if nothing reported one).
+
+        ``fsum``, not ``sum``: per-call costs are tiny and of mixed magnitude,
+        exactly where naive accumulation loses digits.
+        """
+        return round(math.fsum(u.cost_usd for u in self.slots.values()), 8)
+
+    def models(self) -> dict[str, str]:
+        """slot -> model id actually used (only slots that were invoked)."""
+        return {slot: u.model for slot, u in self.slots.items() if u.model}
+
+
+def usage_from_message(message: Any) -> tuple[int, int, str, float]:
+    """Extract ``(input_tokens, output_tokens, model, cost_usd)`` from a response.
+
+    Reads LangChain's structured ``usage_metadata`` first, then falls back to the
+    provider-shaped ``response_metadata['token_usage']`` (prompt/completion tokens
+    and, for OpenRouter with ``usage.include``, a ``cost`` field). All accesses
+    are defensive so a partial or missing metadata block yields zeros, never an
+    exception.
+    """
+    if message is None:
+        return 0, 0, "", 0.0
+
+    input_tokens = 0
+    output_tokens = 0
+    meta = getattr(message, "usage_metadata", None)
+    if isinstance(meta, dict):
+        input_tokens = int(meta.get("input_tokens", 0) or 0)
+        output_tokens = int(meta.get("output_tokens", 0) or 0)
+
+    response_meta = getattr(message, "response_metadata", None) or {}
+    model = ""
+    cost_usd = 0.0
+    if isinstance(response_meta, dict):
+        model = str(response_meta.get("model_name") or response_meta.get("model") or "")
+        token_usage = response_meta.get("token_usage")
+        if isinstance(token_usage, dict):
+            cost_usd = float(token_usage.get("cost", 0.0) or 0.0)
+            if not input_tokens:
+                input_tokens = int(token_usage.get("prompt_tokens", 0) or 0)
+            if not output_tokens:
+                output_tokens = int(token_usage.get("completion_tokens", 0) or 0)
+
+    return input_tokens, output_tokens, model, cost_usd
 
 
 # -- prompts (v1 placeholders; the versioned prompt artifact lands in a later ticket)
@@ -158,7 +272,7 @@ def build_models(
             model=model or cfg["slots"][slot]["default"],
             input_tokens=input_tokens,
             output_tokens=output_tokens,
-            reported_cost_usd=cost,
+            cost_usd=cost,
         )
 
     def rewrite(raw_query: str, history: Sequence[Any]) -> str:
